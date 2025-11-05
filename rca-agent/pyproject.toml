@@ -1,0 +1,39 @@
+[project]
+name = "rca-agent"
+version = "0.1.0"
+description = "RCA Agent for SRE root cause analysis"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "a2a-sdk==0.2.10",
+    "click>=8.1.8",
+    "httpx>=0.28.1",
+    "langchain-google-genai>=2.0.10",
+    "langgraph>=0.3.18",
+        "langchain-community>=0.3.0",
+    "langgraph-prebuilt>=0.0.1",
+    "langchain-openai >=0.1.0",
+    "langchain-core>=0.3.0",
+    "pydantic>=2.10.6",
+    "python-dotenv>=1.1.0",
+    "uvicorn>=0.34.2",
+    "langchain_mcp_adapters",
+    "mcp",
+    "redis",
+    "langchain_aws",
+    "langchain_ollama",
+    "psycopg2-binary",
+    "langfuse",
+    "dotenv",
+    "langchain-ollama==0.3.6",
+
+    "langchain_groq"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "observability"]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
