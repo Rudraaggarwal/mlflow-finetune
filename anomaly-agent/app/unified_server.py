@@ -55,79 +55,56 @@ webhook_agent: Optional[AnomalyAgent] = None
 
 
 
-async def process_alert_background(alert_data: Dict[str, Any], context_id: str):
-    """Background task to process alert(s) directly with the anomaly agent."""
+async def process_payload_background(payload_data: Dict[str, Any], context_id: str, payload_type: str = "alert"):
+    """
+    Background task to process payload directly with the anomaly agent.
+
+    Args:
+        payload_data: The payload data to process
+        context_id: Unique identifier for this request
+        payload_type: Type of payload - "alert" or "raw"
+    """
     global webhook_agent
 
     if not webhook_agent:
-        logger.error(f"{datetime.now()} - Webhook agent not initialized")
+        logger.error(f"Webhook agent not initialized")
         return
 
     try:
-        import json
-
-        # Convert alert data to JSON string for agent processing
-        alert_json = json.dumps(alert_data, indent=2)
-
-        # Create a simple prompt for alert processing
-        alert_prompt = f"""
-You have received alert data from Grafana. Please analyze this alert and determine the appropriate response.
-
-Alert Data:
-{alert_json}
-
-Please analyze this alert and take appropriate action.
-"""
-
-        # Process with anomaly agent
-        logger.info(f"{datetime.now()} - Processing alert background task: {context_id}")
-        agent_result = await webhook_agent.process_alert(alert_prompt)
-
-        # Log final result
-        if agent_result.get('is_task_complete'):
-            logger.info(f"{datetime.now()} - Background alert processing completed: {context_id}")
-        else:
-            logger.warning(f"{datetime.now()} - Background alert processing incomplete: {context_id}")
-
-    except Exception as e:
-        logger.error(f"{datetime.now()} - Error in background alert processing {context_id}: {str(e)}")
-
-
-async def process_raw_payload_background(payload_data: Dict[str, Any], context_id: str):
-    """Background task to process raw payload directly with the anomaly agent."""
-    global webhook_agent
-
-    if not webhook_agent:
-        logger.error(f"{datetime.now()} - Webhook agent not initialized")
-        return
-
-    try:
-        logger.info(f"{datetime.now()} - Processing raw payload: {context_id}")
-        logger.info(f"Payload data: {payload_data}")
+        logger.info(f"Processing {payload_type} payload: {context_id}")
 
         # Check if this is the new payload format with metric data
         if "metric" in payload_data and "current_value" in payload_data:
-            logger.info(f"{datetime.now()} - Detected new metric payload format")
-
-            # Process directly with the new workflow agent
+            logger.info(f"Detected new metric payload format")
             agent_result = await webhook_agent.process_alert(payload_data)
 
-            # Log final result
+            # Log results
             if agent_result.get('success'):
-                logger.info(f"{datetime.now()} - Raw payload processing completed: {context_id}")
-                logger.info(f"Incident ID: {agent_result.get('incident_id')}")
-                logger.info(f"Jira Ticket: {agent_result.get('jira_ticket_id')}")
+                logger.info(f"Payload processing completed: {context_id}")
+                if agent_result.get('incident_id'):
+                    logger.info(f"Incident ID: {agent_result.get('incident_id')}")
+                if agent_result.get('jira_ticket_id'):
+                    logger.info(f"Jira Ticket: {agent_result.get('jira_ticket_id')}")
             else:
-                logger.warning(f"{datetime.now()} - Raw payload processing incomplete: {context_id}")
+                logger.warning(f"Payload processing incomplete: {context_id}")
                 if agent_result.get('error'):
                     logger.error(f"Error: {agent_result.get('error')}")
-
         else:
-            # Legacy format processing
+            # Legacy/standard format processing
             import json
             payload_json = json.dumps(payload_data, indent=2)
 
-            raw_prompt = f"""
+            if payload_type == "alert":
+                prompt = f"""
+You have received alert data from Grafana. Please analyze this alert and determine the appropriate response.
+
+Alert Data:
+{payload_json}
+
+Please analyze this alert and take appropriate action.
+"""
+            else:
+                prompt = f"""
 You have received metric data corresponding to a running container. Please analyze this data and raise incident which reflects the metric data received.
 
 Data:
@@ -136,116 +113,71 @@ Data:
 Please analyze this data.
 """
 
-            # Process with legacy agent method
-            agent_result = await webhook_agent.ainvoke(raw_prompt, context_id)
+            # Process with agent
+            agent_result = await webhook_agent.process_alert(prompt)
 
-            # Log final result
-            if agent_result.get('is_task_complete'):
-                logger.info(f"{datetime.now()} - Raw payload processing completed: {context_id}")
+            # Log results
+            if agent_result.get('is_task_complete') or agent_result.get('success'):
+                logger.info(f"Payload processing completed: {context_id}")
             else:
-                logger.warning(f"{datetime.now()} - Raw payload processing incomplete: {context_id}")
+                logger.warning(f"Payload processing incomplete: {context_id}")
 
     except Exception as e:
-        logger.error(f"{datetime.now()} - Error in raw payload processing {context_id}: {str(e)}")
+        logger.error(f"Error in payload processing {context_id}: {str(e)}")
 
 
 # FastAPI webhook endpoints
-async def grafana_webhook(
+async def _handle_webhook_request(
     request: Request,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    payload_type: str = "alert"
 ):
-    """Grafana alert webhook endpoint."""
+    """
+    Generic webhook handler for processing incoming requests.
+
+    Args:
+        request: FastAPI request object
+        background_tasks: FastAPI background tasks
+        payload_type: Type of payload - "alert" or "raw"
+    """
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
 
     # Generate context ID for this request
-    context_id = f"webhook_{int(time.time() * 1000)}_{abs(hash(str(request.url)))}"
+    prefix = "webhook" if payload_type == "alert" else "raw_payload"
+    context_id = f"{prefix}_{int(time.time() * 1000)}_{abs(hash(str(request.url)))}"
 
     try:
-        headers = dict(request.headers)
-
-        # Parse JSON payload
-        try:
-            alert_data = await request.json()
-
-            # Log raw payload for debugging
-            import json
-            raw_payload = json.dumps(alert_data, indent=2)
-            logger.info(f"{datetime.now()} - Grafana webhook received from {client_ip}")
-            logger.info(f"{datetime.now()} - Payload: {raw_payload}")
-
-        except Exception as e:
-            logger.error(f"{datetime.now()} - Invalid JSON payload from {client_ip}: {str(e)}")
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-        logger.info(f"{datetime.now()} - Processing webhook request: {context_id}")
-
-        # Schedule background processing
-        background_tasks.add_task(
-            process_alert_background,
-            alert_data=alert_data,
-            context_id=context_id
-        )
-
-        processing_time_seconds = time.time() - start_time
-
-        return {
-            "status": "accepted",
-            "message": "Alert received and queued for processing",
-            "context_id": context_id,
-            "processing_time_ms": round(processing_time_seconds * 1000, 2)
-        }
-
-    except HTTPException as e:
-        raise
-    except Exception as e:
-        processing_time_seconds = time.time() - start_time
-        logger.error(f"{datetime.now()} - Unexpected webhook error from {client_ip}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-async def raw_payload_webhook(
-    request: Request,
-    background_tasks: BackgroundTasks
-):
-    """Generic raw payload webhook endpoint for processing any JSON payload."""
-    start_time = time.time()
-    client_ip = request.client.host if request.client else "unknown"
-
-    # Generate context ID for this request
-    context_id = f"raw_payload_{int(time.time() * 1000)}_{abs(hash(str(request.url)))}"
-
-    try:
-        headers = dict(request.headers)
-
         # Parse JSON payload
         try:
             payload_data = await request.json()
 
-            # Log raw payload for debugging
+            # Log payload for debugging
             import json
             raw_payload = json.dumps(payload_data, indent=2)
-            logger.info(f"{datetime.now()} - Raw payload received from {client_ip}")
-            logger.info(f"{datetime.now()} - Payload: {raw_payload}")
+            logger.info(f"{payload_type.capitalize()} webhook received from {client_ip}")
+            logger.info(f"Payload: {raw_payload}")
 
         except Exception as e:
-            logger.error(f"{datetime.now()} - Invalid JSON payload from {client_ip}: {str(e)}")
+            logger.error(f"Invalid JSON payload from {client_ip}: {str(e)}")
             raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-        logger.info(f"{datetime.now()} - Processing raw payload request: {context_id}")
+        logger.info(f"Processing {payload_type} request: {context_id}")
 
         # Schedule background processing
         background_tasks.add_task(
-            process_raw_payload_background,
+            process_payload_background,
             payload_data=payload_data,
-            context_id=context_id
+            context_id=context_id,
+            payload_type=payload_type
         )
 
         processing_time_seconds = time.time() - start_time
+        message = f"{payload_type.capitalize()} received and queued for processing"
 
         return {
             "status": "accepted",
-            "message": "Raw payload received and queued for processing",
+            "message": message,
             "context_id": context_id,
             "processing_time_ms": round(processing_time_seconds * 1000, 2)
         }
@@ -254,86 +186,80 @@ async def raw_payload_webhook(
         raise
     except Exception as e:
         processing_time_seconds = time.time() - start_time
-        logger.error(f"{datetime.now()} - Unexpected raw payload webhook error from {client_ip}: {str(e)}")
+        logger.error(f"Unexpected webhook error from {client_ip}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+async def grafana_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Grafana alert webhook endpoint (HTTP request variant)."""
+    return await _handle_webhook_request(request, background_tasks, "alert")
+
+
+async def raw_payload_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Generic raw payload webhook endpoint (HTTP request variant)."""
+    return await _handle_webhook_request(request, background_tasks, "raw")
+
+
+async def _handle_direct_payload(
+    payload: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+    payload_type: str = "alert"
+):
+    """
+    Generic direct payload handler that accepts payload dict.
+
+    Args:
+        payload: The payload data dictionary
+        background_tasks: FastAPI background tasks
+        payload_type: Type of payload - "alert" or "raw"
+    """
+    start_time = time.time()
+
+    # Generate context ID for this request
+    prefix = "webhook" if payload_type == "alert" else "raw_payload"
+    context_id = f"{prefix}_{int(time.time() * 1000)}_{abs(hash(str(payload)))}"
+
+    try:
+        logger.info(f"{payload_type.capitalize()} webhook received")
+
+        # Log payload for debugging
+        import json
+        raw_payload = json.dumps(payload, indent=2)
+        logger.info(f"Payload: {raw_payload}")
+        logger.info(f"Processing {payload_type} request: {context_id}")
+
+        # Schedule background processing
+        background_tasks.add_task(
+            process_payload_background,
+            payload_data=payload,
+            context_id=context_id,
+            payload_type=payload_type
+        )
+
+        processing_time_seconds = time.time() - start_time
+        message = f"{payload_type.capitalize()} received and queued for processing"
+
+        return {
+            "status": "accepted",
+            "message": message,
+            "context_id": context_id,
+            "processing_time_ms": round(processing_time_seconds * 1000, 2)
+        }
+
+    except Exception as e:
+        processing_time_seconds = time.time() - start_time
+        logger.error(f"Unexpected {payload_type} webhook error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def grafana_webhook_direct(payload: Dict[str, Any], background_tasks: BackgroundTasks):
     """Direct Grafana webhook handler that accepts payload dict."""
-    start_time = time.time()
-
-    # Generate context ID for this request
-    context_id = f"webhook_{int(time.time() * 1000)}_{abs(hash(str(payload)))}"
-
-    try:
-        logger.info(f"{datetime.now()} - Grafana webhook received")
-
-        # Log payload for debugging
-        import json
-        raw_payload = json.dumps(payload, indent=2)
-        logger.info(f"{datetime.now()} - Payload: {raw_payload}")
-
-        logger.info(f"{datetime.now()} - Processing webhook request: {context_id}")
-
-        # Schedule background processing
-        background_tasks.add_task(
-            process_alert_background,
-            alert_data=payload,
-            context_id=context_id
-        )
-
-        processing_time_seconds = time.time() - start_time
-
-        return {
-            "status": "accepted",
-            "message": "Alert received and queued for processing",
-            "context_id": context_id,
-            "processing_time_ms": round(processing_time_seconds * 1000, 2)
-        }
-
-    except Exception as e:
-        processing_time_seconds = time.time() - start_time
-        logger.error(f"{datetime.now()} - Unexpected webhook error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return await _handle_direct_payload(payload, background_tasks, "alert")
 
 
 async def raw_payload_webhook_direct(payload: Dict[str, Any], background_tasks: BackgroundTasks):
     """Direct raw payload webhook handler that accepts payload dict."""
-    start_time = time.time()
-
-    # Generate context ID for this request
-    context_id = f"raw_payload_{int(time.time() * 1000)}_{abs(hash(str(payload)))}"
-
-    try:
-        logger.info(f"{datetime.now()} - Raw payload webhook received")
-
-        # Log payload for debugging
-        import json
-        raw_payload = json.dumps(payload, indent=2)
-        logger.info(f"{datetime.now()} - Payload: {raw_payload}")
-
-        logger.info(f"{datetime.now()} - Processing raw payload request: {context_id}")
-
-        # Schedule background processing
-        background_tasks.add_task(
-            process_raw_payload_background,
-            payload_data=payload,
-            context_id=context_id
-        )
-
-        processing_time_seconds = time.time() - start_time
-
-        return {
-            "status": "accepted",
-            "message": "Raw payload received and queued for processing",
-            "context_id": context_id,
-            "processing_time_ms": round(processing_time_seconds * 1000, 2)
-        }
-
-    except Exception as e:
-        processing_time_seconds = time.time() - start_time
-        logger.error(f"{datetime.now()} - Unexpected raw payload webhook error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return await _handle_direct_payload(payload, background_tasks, "raw")
 
 
 async def health_check():
@@ -348,7 +274,7 @@ async def health_check():
         }
 
     except Exception as e:
-        logger.error(f"{datetime.now()} - Health check failed: {str(e)}")
+        logger.error(f"Health check failed: {str(e)}")
 
         return {
             "status": "unhealthy",
@@ -368,7 +294,7 @@ async def readiness_check():
         }
 
     except Exception as e:
-        logger.error(f"{datetime.now()} - Readiness check failed: {str(e)}")
+        logger.error(f"Readiness check failed: {str(e)}")
         raise HTTPException(status_code=503, detail="Service not ready")
 
 
@@ -381,7 +307,7 @@ async def liveness_check():
             "service": "anomaly-agent"
         }
     except Exception as e:
-        logger.error(f"{datetime.now()} - Liveness check failed: {str(e)}")
+        logger.error(f"Liveness check failed: {str(e)}")
         return {
             "alive": True,
             "timestamp": datetime.now().isoformat(),
@@ -405,7 +331,7 @@ async def status_endpoint():
         }
 
     except Exception as e:
-        logger.error(f"{datetime.now()} - Status endpoint failed: {str(e)}")
+        logger.error(f"Status endpoint failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Status collection error")
 
 
@@ -417,9 +343,9 @@ def create_unified_app(host: str, port: int) -> FastAPI:
     try:
         mcp_config = get_mcp_config()
         webhook_agent = AnomalyAgent()
-        logger.info(f"{datetime.now()} - Webhook agent initialized successfully")
+        logger.info(f"Webhook agent initialized successfully")
     except Exception as e:
-        logger.error(f"{datetime.now()} - Failed to initialize webhook agent: {str(e)}")
+        logger.error(f"Failed to initialize webhook agent: {str(e)}")
 
     # Create A2A application
     try:
@@ -454,9 +380,9 @@ def create_unified_app(host: str, port: int) -> FastAPI:
         a2a_app = A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
         a2a_starlette = a2a_app.build()
 
-        logger.info(f"{datetime.now()} - A2A application initialized successfully")
+        logger.info(f"A2A application initialized successfully")
     except Exception as e:
-        logger.error(f"{datetime.now()} - Failed to initialize A2A application: {str(e)}")
+        logger.error(f"Failed to initialize A2A application: {str(e)}")
         raise
 
     # Create main FastAPI application
@@ -538,21 +464,21 @@ def create_unified_app(host: str, port: int) -> FastAPI:
 def main(host, port):
     """Starts the FastAPI-based Anomaly Agent server with A2A capabilities."""
     try:
-        logger.info(f"{datetime.now()} - Starting Anomaly Agent Server on {host}:{port}")
+        logger.info(f"Starting Anomaly Agent Server on {host}:{port}")
 
         # Create unified application
         app = create_unified_app(host, port)
 
-        logger.info(f"{datetime.now()} - 🚀 Starting FastAPI Anomaly Agent Server")
-        logger.info(f"{datetime.now()} - 📡 A2A endpoints: http://{host}:{port}/tasks/*")
-        logger.info(f"{datetime.now()} - 🔗 Webhook endpoints: http://{host}:{port}/webhook/*")
-        logger.info(f"{datetime.now()} - 🏥 Health check: http://{host}:{port}/health")
+        logger.info(f"Starting FastAPI Anomaly Agent Server")
+        logger.info(f"A2A endpoints: http://{host}:{port}/tasks/*")
+        logger.info(f"Webhook endpoints: http://{host}:{port}/webhook/*")
+        logger.info(f"Health check: http://{host}:{port}/health")
 
         # Run the server
         uvicorn.run(app, host=host, port=port, log_level="info")
 
     except Exception as e:
-        logger.error(f"{datetime.now()} - Failed to start server: {str(e)}")
+        logger.error(f"Failed to start server: {str(e)}")
         sys.exit(1)
 
 
