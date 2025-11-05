@@ -22,6 +22,38 @@ load_dotenv()
 langfuse = get_client()
 logger = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_SERVICE_DEPENDENCIES = ["oemconnector", "catalogueserv"]
+
+# Jira Custom Field IDs
+JIRA_FIELD_PRODUCT = "customfield_10044"
+JIRA_FIELD_INCIDENT_TYPE = "customfield_10344"
+JIRA_FIELD_FAILURE_TYPE = "customfield_10335"
+JIRA_FIELD_SEVERITY = "customfield_10065"
+JIRA_FIELD_ASSIGNEE = "customfield_10537"
+JIRA_FIELD_IMPACT = "customfield_10085"
+JIRA_FIELD_DESCRIPTION = "customfield_10538"
+JIRA_FIELD_DETECTION_TIME = "customfield_10237"
+JIRA_FIELD_OCCURRENCE_TIME = "customfield_10539"
+JIRA_FIELD_MANAGER = "customfield_10069"
+JIRA_FIELD_BUSINESS_IMPACT = "customfield_10540"
+JIRA_FIELD_ROOT_CAUSE = "customfield_10337"
+JIRA_FIELD_RESOLUTION_TYPE = "customfield_10338"
+
+# Jira Field Values
+JIRA_PRODUCT_VALUE = "EMI"
+JIRA_INCIDENT_TYPE_VALUE = "Alert"
+JIRA_FAILURE_TYPE_VALUE = "Single Component Failure"
+JIRA_SEVERITY_VALUE = "Sev 1"
+JIRA_IMPACT_VALUE = "Moderate / Limited"
+JIRA_BUSINESS_IMPACT_VALUE = "Not Applicable"
+JIRA_ROOT_CAUSE_VALUE = "Change Failure"
+JIRA_RESOLUTION_TYPE_VALUE = "Resolved (Permanently)"
+
+# Jira Account IDs
+JIRA_DEFAULT_ASSIGNEE_ID = "712020:e3cefd80-5e61-4a6a-a72c-2e504b08e11c"
+JIRA_DEFAULT_MANAGER_ID = "557058:ca5a0eee-2f7d-478f-9358-42de1e3c64fb"
+
 class AnomalyAgentState(TypedDict):
     """State for the anomaly detection workflow"""
     # Input data
@@ -32,6 +64,7 @@ class AnomalyAgentState(TypedDict):
     service: str
     description: str
     timestamp: str
+    session_id: str
     # Processing data
     service_dependencies: List[str]
     jira_ticket_id: Optional[str]
@@ -41,8 +74,20 @@ class AnomalyAgentState(TypedDict):
     current_step: str
     error: Optional[str]
     completed: bool
-    
-_global_session_id=""
+
+def _escape_sql_string(value: str) -> str:
+    """
+    Escape single quotes in SQL string values to prevent SQL injection.
+
+    Args:
+        value: The string value to escape
+
+    Returns:
+        Escaped string safe for SQL queries
+    """
+    if not isinstance(value, str):
+        return str(value)
+    return value.replace("'", "''")
 
 class AnomalyAgent:
     """Anomaly Detection Agent with conditional workflow graph and comprehensive observability"""
@@ -61,20 +106,19 @@ class AnomalyAgent:
             mcp_config = get_mcp_config()
             if mcp_config:
                 self.mcp_client = MultiServerMCPClient(mcp_config)
-                logger.info("✅ MCP client initialized for anomaly workflow")
+                logger.info("MCP client initialized for anomaly workflow")
             else:
-                logger.warning("⚠️ No MCP configuration available")
+                logger.warning("No MCP configuration available")
         except Exception as e:
-            logger.warning(f"⚠️ MCP client initialization failed: {e}")
+            logger.warning(f"MCP client initialization failed: {e}")
 
         # Initialize LLM
         self.llm = LLMConfig.get_llm()
         
         # Build workflow graph
         self.graph = self._build_workflow_graph()
-        logger.info("✅ Anomaly Workflow Agent initialized")
+        logger.info("Anomaly Workflow Agent initialized")
 
-    # @observe(name="workflow-graph-construction")
     def _build_workflow_graph(self):
         """Build the conditional workflow graph with observability."""
         with langfuse.start_as_current_span(name="anomaly-workflow-graph-build") as span:
@@ -181,7 +225,6 @@ class AnomalyAgent:
                 )
                 raise
 
-    # @observe(name="mcp-tools-setup")
     async def setup_mcp_tools(self):
         """Setup MCP tools for the workflow with observability."""
         with langfuse.start_as_current_span(name="mcp-tools-initialization") as span:
@@ -225,7 +268,6 @@ class AnomalyAgent:
                 logger.error(f"Failed to setup MCP tools: {e}")
                 raise
 
-    # @observe(name="alert-status-check")
     async def _check_alert_status_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """STEP 0: Check if alert is resolved or active with comprehensive tracing."""
         with langfuse.start_as_current_span(name="check-alert-status") as span:
@@ -375,7 +417,6 @@ class AnomalyAgent:
                 
         return state
 
-    # @observe(name="workflow-routing-decision")
     def _should_handle_resolved(self, state: AnomalyAgentState) -> str:
         """Decide whether to handle resolved alert or continue with active alert processing."""
         with langfuse.start_as_current_span(name="resolved-alert-routing") as span:
@@ -390,7 +431,6 @@ class AnomalyAgent:
             
             return decision
 
-    # @observe(name="error-check-routing")
     def _check_for_errors(self, state: AnomalyAgentState) -> str:
         """Check if there are errors that should stop the workflow."""
         with langfuse.start_as_current_span(name="error-validation") as span:
@@ -408,14 +448,13 @@ class AnomalyAgent:
                 
             return decision
 
-    # @observe(name="resolved-alert-handling")
     async def _handle_resolved_alert_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """Handle resolved alert by updating database"""
         logger.info("STEP 0.1: Handling resolved alert")
 
         try:
             # Search for similar alerts in database
-            alertname = state["alertname"]
+            alertname = _escape_sql_string(state["alertname"])
 
             # Get Postgres tools
             postgres_tools = [tool for tool in self.mcp_tools if 'describe_table' in tool.name.lower() or 'execute_query' in tool.name.lower()]
@@ -435,10 +474,10 @@ class AnomalyAgent:
 
                 if search_result:
                     # Update incidents to resolved
-                    current_time = datetime.now(timezone.utc).isoformat()
+                    current_time = _escape_sql_string(datetime.now(timezone.utc).isoformat())
 
                     for incident in search_result:
-                        incident_id = incident.get('id')
+                        incident_id = int(incident.get('id'))  # Ensure it's an integer
                         update_query = f"""
                         UPDATE incidents
                         SET status = 'Resolved', resolution_time = '{current_time}', mttr = '{current_time}'
@@ -460,7 +499,7 @@ class AnomalyAgent:
 
     async def _check_recent_incidents_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """Check for recent incidents using React agent with MCP tools"""
-        logger.info("🔍 Checking for recent incidents and handling deduplication")
+        logger.info("Checking for recent incidents and handling deduplication")
 
         try:
             # Initialize deduplication fields
@@ -553,7 +592,7 @@ class AnomalyAgent:
                 async for chunk in react_agent.astream(inputs, config):
                     # Process each chunk
                     for node_name, node_data in chunk.items():
-                        logger.info(f"🔄 React Agent Node: {node_name}")
+                        logger.info(f"React Agent Node: {node_name}")
 
                     if 'messages' in node_data:
                         for msg in node_data['messages']:
@@ -569,7 +608,7 @@ class AnomalyAgent:
                                         tool_args = tool_call.get('args', {}) if isinstance(tool_call, dict) else getattr(tool_call, 'args', {})
                                         tool_id = tool_call.get('id', '') if isinstance(tool_call, dict) else getattr(tool_call, 'id', '')
 
-                                        logger.info(f"🔧 Triage Agent calling tool: {tool_name}")
+                                        logger.info(f"Triage Agent calling tool: {tool_name}")
                                         logger.info(f"   Tool args: {tool_args}")
 
                                         # Track tool info
@@ -633,7 +672,7 @@ class AnomalyAgent:
                             if hasattr(msg, 'name') and msg.name:
                                 try:
                                     content = getattr(msg, 'content', 'No content')
-                                    logger.info(f"🔍 Tool response from {msg.name}: {str(content)[:200]}..." if len(str(content)) > 200 else f"🔍 Tool response from {msg.name}: {content}")
+                                    logger.info(f"Tool response from {msg.name}: {str(content)[:200]}..." if len(str(content)) > 200 else f"Tool response from {msg.name}: {content}")
 
                                     # **CREATE TOOL RESPONSE SPANS**
                                     with langfuse.start_as_current_span(
@@ -659,7 +698,7 @@ class AnomalyAgent:
                                         if is_error:
                                             if any(tool_type in msg.name.lower() for tool_type in ['postgres', 'database', 'jira', 'execute_query']):
                                                 mcp_errors += 1
-                                                logger.warning(f"❌ MCP tool error in {msg.name}: {content}")
+                                                logger.warning(f"MCP tool error in {msg.name}: {content}")
                                                 
                                                 # **CREATE ERROR SPAN**
                                                 with langfuse.start_as_current_span(name="mcp-tool-error") as error_span:
@@ -694,7 +733,7 @@ class AnomalyAgent:
                     # Keep track of the final result
                     final_result = chunk
 
-                logger.info(f"📊 Incident Check Summary: {mcp_calls} MCP calls made, {mcp_errors} errors encountered")
+                logger.info(f"Incident Check Summary: {mcp_calls} MCP calls made, {mcp_errors} errors encountered")
 
             except Exception as streaming_error:
                 logger.error(f"Error during streaming execution: {streaming_error}")
@@ -710,28 +749,28 @@ class AnomalyAgent:
                             final_message = final_msg.content
                             break
 
-            logger.info(f"✅ Final React agent response: {final_message[:200]}..." if len(final_message) > 200 else f"✅ Final React agent response: {final_message}")
+            logger.info(f"Final React agent response: {final_message[:200]}..." if len(final_message) > 200 else f"Final React agent response: {final_message}")
 
             # Parse the STATUS line from final message to determine flow
             if "STATUS: DUPLICATE" in final_message:
                 state["is_duplicate_alert"] = True
                 state["current_step"] = "duplicate_alert_handled"
-                logger.info("✅ STATUS: DUPLICATE - Active incident found, ignoring duplicate (still processing)")
+                logger.info("STATUS: DUPLICATE - Active incident found, ignoring duplicate (still processing)")
 
             elif "STATUS: NEW" in final_message:
                 state["current_step"] = "no_recent_incidents"
-                logger.info("✅ STATUS: NEW - Proceeding with normal alert processing (resolved incident or no match)")
+                logger.info("STATUS: NEW - Proceeding with normal alert processing (resolved incident or no match)")
 
             else:
                 # Fallback if STATUS line is not found
                 state["current_step"] = "no_recent_incidents"
-                logger.warning("⚠️ No clear STATUS found in response, proceeding as new incident")
+                logger.warning("No clear STATUS found in response, proceeding as new incident")
 
             # Store the agent's analysis for reference
             state["incident_analysis"] = final_message
 
         except Exception as e:
-            logger.error(f"❌ Error in React agent incident check: {e}")
+            logger.error(f"Error in React agent incident check: {e}")
             state["error"] = str(e)
             state["current_step"] = "incident_check_error"
 
@@ -883,7 +922,6 @@ class AnomalyAgent:
                 
         return state
 
-    # @observe(name="llm-alert-name-inference")
     async def _infer_alert_name_from_metric(self, alert_payload: Dict[str, Any]) -> tuple[str, str]:
         """Infer alert name and service from metric payload using a single LLM call returning JSON.
 
@@ -978,7 +1016,6 @@ Rules:
                 except Exception:
                     return "Anomaly Alert", "unknown"
 
-    # @observe(name="llm-description-generation")
     async def _generate_alert_description(self, state: AnomalyAgentState, alert_payload: Dict[str, Any]):
         """Generate alert description using LLM with comprehensive tracing."""
         with langfuse.start_as_current_span(name="alert-description-generation") as span:
@@ -1056,7 +1093,6 @@ Rules:
                     annotations = alert_payload["alerts"][0].get("annotations", {})
                     state["description"] = annotations.get("description", annotations.get("summary", "No description available"))
 
-    # @observe(name="service-dependencies-retrieval")
     async def _get_service_dependencies_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """Get service dependencies with tracing."""
         with langfuse.start_as_current_span(name="get-service-dependencies") as span:
@@ -1068,10 +1104,8 @@ Rules:
                     metadata={"step": "service_dependencies", "workflow_position": "1.1"}
                 )
                 
-                # For Paylater application, always search for oemconnector and catalogueserv only
-                # The prompt specifies to always search for oemconnector and catalogueserv only
-                # Paylater is application name inside which these are services
-                state["service_dependencies"] = ["oemconnector", "catalogueserv"]
+                # For Paylater application, use default service dependencies
+                state["service_dependencies"] = DEFAULT_SERVICE_DEPENDENCIES
                 state["current_step"] = "service_dependencies_complete"
                 
                 span.update(
@@ -1096,7 +1130,6 @@ Rules:
                 
         return state
 
-    # @observe(name="jira-ticket-creation")
     async def _create_jira_ticket_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """STEP 2: Create Jira ticket with comprehensive tracing."""
         with langfuse.start_as_current_span(name="create-jira-ticket") as span:
@@ -1146,19 +1179,19 @@ Rules:
                         "reporter": {
                             "accountId": "712020:0018661f-7bc3-43f2-98a8-130040b4b71c"
                         },
-                        "customfield_10044": [{"value": "EMI"}],
-                        "customfield_10344": {"value": "Alert"},
-                        "customfield_10335": {"value": "Single Component Failure"},
-                        "customfield_10065": {"value": "Sev 1"},
-                        "customfield_10537": [{"accountId": "712020:e3cefd80-5e61-4a6a-a72c-2e504b08e11c"}],
-                        "customfield_10085": {"value": "Moderate / Limited"},
-                        "customfield_10538": f"{state['service']} service experiencing {state['alertname']}",
-                        "customfield_10237": current_timestamp,
-                        "customfield_10539": alert_timestamp,
-                        "customfield_10069": {"accountId": "557058:ca5a0eee-2f7d-478f-9358-42de1e3c64fb"},
-                        "customfield_10540": {"value": "Not Applicable"},
-                        "customfield_10337": {"value": "Change Failure"},
-                        "customfield_10338": {"value": "Resolved (Permanently)"}
+                        JIRA_FIELD_PRODUCT: [{"value": JIRA_PRODUCT_VALUE}],
+                        JIRA_FIELD_INCIDENT_TYPE: {"value": JIRA_INCIDENT_TYPE_VALUE},
+                        JIRA_FIELD_FAILURE_TYPE: {"value": JIRA_FAILURE_TYPE_VALUE},
+                        JIRA_FIELD_SEVERITY: {"value": JIRA_SEVERITY_VALUE},
+                        JIRA_FIELD_ASSIGNEE: [{"accountId": JIRA_DEFAULT_ASSIGNEE_ID}],
+                        JIRA_FIELD_IMPACT: {"value": JIRA_IMPACT_VALUE},
+                        JIRA_FIELD_DESCRIPTION: f"{state['service']} service experiencing {state['alertname']}",
+                        JIRA_FIELD_DETECTION_TIME: current_timestamp,
+                        JIRA_FIELD_OCCURRENCE_TIME: alert_timestamp,
+                        JIRA_FIELD_MANAGER: {"accountId": JIRA_DEFAULT_MANAGER_ID},
+                        JIRA_FIELD_BUSINESS_IMPACT: {"value": JIRA_BUSINESS_IMPACT_VALUE},
+                        JIRA_FIELD_ROOT_CAUSE: {"value": JIRA_ROOT_CAUSE_VALUE},
+                        JIRA_FIELD_RESOLUTION_TYPE: {"value": JIRA_RESOLUTION_TYPE_VALUE}
                     }
                 }
 
@@ -1238,7 +1271,6 @@ Rules:
                 
         return state
 
-    # @observe(name="jira-description-formatting")
     async def _format_jira_description(self, state: AnomalyAgentState) -> str:
         """Generate Jira description using LLM based on alert payload with tracing."""
         with langfuse.start_as_current_span(name="format-jira-description") as span:
@@ -1328,7 +1360,6 @@ Rules:
                 # Fallback to template-based description
                 return self._fallback_jira_description(state, alert_payload)
 
-    # @observe(name="jira-description-fallback")
     def _fallback_jira_description(self, state: AnomalyAgentState, alert_payload: dict) -> str:
         """Fallback template-based Jira description if LLM fails with tracing."""
         with langfuse.start_as_current_span(name="fallback-jira-description") as span:
@@ -1400,7 +1431,6 @@ Rules:
 
             return description
 
-    # @observe(name="incident-storage")
     async def _store_incident_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """STEP 3: Store incident in database with comprehensive tracing."""
         with langfuse.start_as_current_span(name="store-incident") as span:
@@ -1452,20 +1482,28 @@ Rules:
 
                 # Insert incident with database execution tracing
                 with langfuse.start_as_current_span(name="database-insert-execution") as db_span:
+                    # Escape all string values for SQL safety
+                    escaped_alertname = _escape_sql_string(state["alertname"])
+                    escaped_severity = _escape_sql_string(state["severity"])
+                    escaped_service = _escape_sql_string(state["service"])
+                    escaped_description = _escape_sql_string(db_description)
+                    escaped_jira_url = _escape_sql_string(jira_url)
+                    escaped_current_time = _escape_sql_string(current_time)
+
                     insert_query = f"""
                     INSERT INTO incidents (
                         name, risk_level, service, description, status,
                         mttd, created_date, dependencies, jira_url
                     ) VALUES (
-                        '{state["alertname"].replace("'", "''")}',
-                        '{state["severity"]}',
-                        '{state["service"].replace("'", "''")}',
-                        '{db_description.replace("'", "''")}',
+                        '{escaped_alertname}',
+                        '{escaped_severity}',
+                        '{escaped_service}',
+                        '{escaped_description}',
                         'Active',
-                        '{current_time}',
-                        '{current_time}',
+                        '{escaped_current_time}',
+                        '{escaped_current_time}',
                         {dependencies_str},
-                        '{jira_url}'
+                        '{escaped_jira_url}'
                     ) RETURNING id;"""
                     
                     db_span.update(
@@ -1525,7 +1563,6 @@ Rules:
                 
         return state
 
-    # @observe(name="correlation-agent-notification")
     async def _notify_correlation_agent_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """STEP 4: Notify correlation agent with comprehensive tracing."""
         with langfuse.start_as_current_span(name="notify-correlation-agent") as span:
@@ -1581,7 +1618,7 @@ Rules:
                                 severity=state["severity"],
                                 alert_name=state["alertname"],
                                 timestamp=state["timestamp"],
-                                global_session_id=_global_session_id
+                                global_session_id=state["session_id"]
                             )
                             
                             attempt_span.update(
@@ -1626,7 +1663,6 @@ Rules:
                 
         return state
 
-    # @observe(name="workflow-completion")
     async def _complete_workflow_node(self, state: AnomalyAgentState) -> AnomalyAgentState:
         """Complete the workflow with tracing."""
         with langfuse.start_as_current_span(name="complete-workflow") as span:
@@ -1671,7 +1707,6 @@ Rules:
             pass
         return fallback
 
-    # @observe(name="anomaly-agent-execution")
     async def process_alert(self, alert_payload: Dict[str, Any]) -> Dict[str, Any]:
         """Main entry point to process an alert with comprehensive observability."""
         with langfuse.start_as_current_span(
@@ -1684,11 +1719,11 @@ Rules:
         ) as main_span:
             
             logger.info("Starting anomaly detection workflow")
-            
-            global _global_session_id
-            _global_session_id = str(uuid.uuid4().hex)
-            
-            main_span.update_trace(session_id = _global_session_id)
+
+            # Create session ID for this workflow execution
+            session_id = str(uuid.uuid4().hex)
+
+            main_span.update_trace(session_id=session_id)
             
             main_span.update(
                 input={
@@ -1715,6 +1750,7 @@ Rules:
                     alertname="",
                     severity="",
                     service="",
+                    session_id=session_id,
                     description="",
                     timestamp="",
                     service_dependencies=[],
