@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    from langfuse import Langfuse
+    from langfuse import Langfuse, get_client
     LANGFUSE_AVAILABLE = True
 except ImportError:
     LANGFUSE_AVAILABLE = False

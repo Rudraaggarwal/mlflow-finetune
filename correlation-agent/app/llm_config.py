@@ -10,8 +10,6 @@ from langchain_groq import ChatGroq
 import boto3
 import logging
 
-
-
 def mask_secret(secret, show_start=4, show_end=4):
     if not secret:
         return "Not Set"
@@ -25,8 +23,9 @@ class LLMConfig:
     """
 
     @staticmethod
-    def get_llm():
-        provider = os.getenv("LLM_PROVIDER", "bedrock").lower()
+    def get_llm(provider_override=None):
+        provider = provider_override or os.getenv("LLM_PROVIDER", "bedrock")
+        provider = provider.lower()
         if provider == "ollama":
             return get_ollama_llm()
         elif provider == "azure":
@@ -39,7 +38,7 @@ class LLMConfig:
             return get_groq_llm()
         else:
             raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
-
+    
 
 
 def get_ollama_llm():
@@ -52,13 +51,13 @@ def get_ollama_llm():
         # Optional auth headers if needed by a remote Ollama
         # headers={"Authorization": f"Bearer {os.getenv('OLLAMA_TOKEN')}"}
     )
-
+    
 def get_azure_llm():
 
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
-
+    
     print(f"Using Azure OpenAI with API Key: {mask_secret(api_key)}")
     print(f"Endpoint: {endpoint}, Deployment: {deployment}")
 
@@ -68,31 +67,35 @@ def get_azure_llm():
     api_version = os.getenv("AZURE_OPENAI_VERSION", "2024-02-15-preview")
     model = os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
     temperature = float(os.getenv("AZURE_OPENAI_TEMPERATURE", "0.2"))
-
+   
     print(f"Using Azure OpenAI Model: {model} with API Version: {api_version} and Temperature: {temperature}")
-
+    
 
     return AzureChatOpenAI(
         api_key=api_key,
-        azure_endpoint=endpoint,
+        azure_endpoint=endpoint,           
         openai_api_version=api_version,
-        azure_deployment=deployment,
+        azure_deployment=deployment,       
         model=model,
         temperature=temperature,
     )
+    
 
 
 
 
 def get_bedrock_llm():
-    # AWS Bedrock (optional path) - EXACT copy of working anomaly agent
-    aws_bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
+   
+    if os.getenv("AWS_BEARER_TOKEN_BEDROCK")=='':
+        aws_bearer_token=''
+    else:
+        aws_bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
 
     # Set bearer token unconditionally like anomaly agent
-    os.environ['AWS_BEARER_TOKEN_BEDROCK']=aws_bearer_token
+        os.environ['AWS_BEARER_TOKEN_BEDROCK']=aws_bearer_token
     region = os.getenv("AWS_REGION", "ap-south-1")
     model_id = os.getenv("BEDROCK_MODEL", "apac.anthropic.claude-3-7-sonnet-20250219-v1:0")
-
+    
     client = boto3.client(
         service_name="bedrock-runtime",
         region_name=region
@@ -110,25 +113,26 @@ def get_litellm_llm():
     Supports 100+ LLM providers through LiteLLM proxy
     """
 
-    model = os.getenv("LITELLM_MODEL", "bedrock-claude-3-7-sonnet")
+    model = os.getenv("LITELLM_MODEL", "bedrock-claude-3-7-sonnet")  
     temperature = float(os.getenv("LITELLM_TEMPERATURE", "0.2"))
-
+    
     # LiteLLM server configuration
-    proxy_url = os.getenv("LITELLM_PROXY_URL", "http://192.168.101.144:32090/v1")
-    api_key = os.getenv("LITELLM_API_KEY", "")
-
+    proxy_url = os.getenv("LITELLM_PROXY_URL", "http://192.168.101.144:32090/v1")  
+    api_key = os.getenv("LITELLM_API_KEY", "") 
+    
     print(f"Using LiteLLM with model: {model}")
     print(f"Temperature: {temperature}")
     print(f"Proxy URL: {proxy_url}")
     print(f"API Key: {mask_secret(api_key)}")
 
 
+
     llm = ChatOpenAI(
         openai_api_base=proxy_url,
         api_key=api_key,
-        model=model,
+        model = model,
         temperature=0.1,
-        tags=["remediation_agent"]
+        tags=["correlation_agent"]
     )
 
     return llm
