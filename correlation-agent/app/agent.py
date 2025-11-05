@@ -382,9 +382,9 @@ class CorrelationAgent:
                         metadata={"status": "error"}
                     )
 
-                    logger.error(f"Failed to connect MCP client: {e}")
+                    logger.error(f"Failed to connect MCP client: {str(e)[:200]}")
                     import traceback
-                    logger.error(f"MCP connection stack trace: {traceback.format_exc()}")
+                    logger.error(f"MCP connection stack trace: {str(traceback.format_exc())[:200]}")
                     self.mcp_client = None
             else:
                 span.update(
@@ -407,7 +407,7 @@ class CorrelationAgent:
             )
 
             if has_error:
-                logger.error(f"Workflow stopping due to error: {state['error']}")
+                logger.error(f"Workflow stopping due to error: {str(state['error'])[:200]}")
 
             return decision
 
@@ -516,7 +516,7 @@ class CorrelationAgent:
                                 metadata={"status": "success"}
                             )
                         except json.JSONDecodeError:
-                            logger.error(f"Failed to parse alert payload: {alert_payload}")
+                            logger.error(f"Failed to parse alert payload: {str(alert_payload)[:200]}")
                             state["error"] = "Invalid alert payload format"
                             parse_span.update(
                                 output={"error": "Invalid alert payload format"},
@@ -554,7 +554,7 @@ class CorrelationAgent:
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error parsing alert: {error_msg}")
+                logger.error(f"Error parsing alert: {str(error_msg)[:200]}")
                 state["error"] = error_msg
 
                 span.update(
@@ -597,7 +597,7 @@ class CorrelationAgent:
                         metadata={"tool_execution": "service_dependencies"}
                     )
 
-                    logger.info(f"[{get_timestamp()}] Service dependencies tool result: {dependencies_result}")
+                    logger.info(f"[{get_timestamp()}] Service dependencies tool result: {str(dependencies_result)[:200]}")
 
                 # Parse dependencies from JSON result
                 if isinstance(dependencies_result, str):
@@ -606,7 +606,7 @@ class CorrelationAgent:
                             deps_data = json.loads(dependencies_result)
 
                             if "error" in deps_data:
-                                logger.error(f"Service dependencies tool error: {deps_data['error']}")
+                                logger.error(f"Service dependencies tool error: {str(deps_data['error'])[:200]}")
                                 state["service_dependencies"] = [service_name]  # Fallback to just the service itself
                                 parse_span.update(
                                     output={"error": deps_data['error'], "fallback_used": True},
@@ -662,7 +662,7 @@ class CorrelationAgent:
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error getting service dependencies: {error_msg}")
+                logger.error(f"Error getting service dependencies: {str(error_msg)[:200]}")
                 state["service_dependencies"] = [state["service"]]  # Fallback
                 logger.warning(f"Using fallback dependencies: {state['service_dependencies']}")
 
@@ -742,15 +742,15 @@ class CorrelationAgent:
                     logger.error(f"Error assigning grafana_info to state: {assign_error}")
                     logger.error(f"Assign error type: {type(assign_error).__name__}")
                     import traceback
-                    logger.error(f"Assign stack trace: {traceback.format_exc()}")
+                    logger.error(f"Assign stack trace: {str(traceback.format_exc())[:200]}")
                     raise
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error extracting Grafana info: {error_msg}")
+                logger.error(f"Error extracting Grafana info: {str(error_msg)[:200]}")
                 logger.error(f"Error type: {type(e).__name__}")
                 import traceback
-                logger.error(f"Stack trace: {traceback.format_exc()}")
+                logger.error(f"Stack trace: {str(traceback.format_exc())[:200]}")
                 state["grafana_alert_info"] = {}
                 state["error"] = error_msg
 
@@ -938,7 +938,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                         except Exception as fallback_error:
                             logger.error(f"Failed to create fallback query: {fallback_error}")
                             import traceback
-                            logger.error(f"Fallback error stack trace: {traceback.format_exc()}")
+                            logger.error(f"Fallback error stack trace: {str(traceback.format_exc())[:200]}")
                             state["error"] = f"Failed to generate LogQL queries: {str(e)}"
 
                             fallback_span.update(
@@ -961,10 +961,10 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error generating LogQL queries: {error_msg}")
+                logger.error(f"Error generating LogQL queries: {str(error_msg)[:200]}")
                 logger.error(f"Error type: {type(e).__name__}")
                 import traceback
-                logger.error(f"LogQL generation stack trace: {traceback.format_exc()}")
+                logger.error(f"LogQL generation stack trace: {str(traceback.format_exc())[:200]}")
                 state["error"] = error_msg
 
                 span.update(
@@ -1186,7 +1186,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                         logger.error(f"Failed to execute query {i+1}: {query_error}")
                         logger.error(f"Query error type: {type(query_error).__name__}")
                         import traceback
-                        logger.error(f"Query error stack trace: {traceback.format_exc()}")
+                        logger.error(f"Query error stack trace: {str(traceback.format_exc())[:200]}")
 
                 # **ENHANCED: Tool execution summary**
                 with langfuse.start_as_current_span(name="logs-fetching-summary") as summary_span:
@@ -1221,10 +1221,10 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error fetching logs: {error_msg}")
+                logger.error(f"Error fetching logs: {str(error_msg)[:200]}")
                 logger.error(f"Error type: {type(e).__name__}")
                 import traceback
-                logger.error(f"Log fetch stack trace: {traceback.format_exc()}")
+                logger.error(f"Log fetch stack trace: {str(traceback.format_exc())[:200]}")
                 state["error"] = error_msg
 
                 span.update(
@@ -1414,11 +1414,12 @@ Write your findings as a clear investigation report that includes:
 
                 # Store correlation analysis in database immediately
                 try:
-                    results = {"structured_correlation": state.get("structured_correlation")}
-                    await self._store_analysis_in_database_new(state, results)
-                    logger.info("Stored correlation analysis in database immediately")
+                    incident_id = await self.storage_manager.extract_incident_id(state["incident_key"])
+                    if incident_id and state.get("structured_correlation"):
+                        await self.storage_manager.store_correlation_data(incident_id, state["structured_correlation"])
+                        logger.info("Stored correlation analysis in database immediately")
                 except Exception as db_error:
-                    logger.error(f"Failed to store correlation analysis in database: {db_error}")
+                    logger.error(f"Failed to store correlation analysis in database: {str(db_error)[:200]}")
 
                 # Add JIRA comment immediately after correlation analysis completion
                 await self._add_jira_comment_for_analysis(
@@ -1441,7 +1442,7 @@ Write your findings as a clear investigation report that includes:
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error in log correlation analysis: {error_msg}")
+                logger.error(f"Error in log correlation analysis: {str(error_msg)[:200]}")
                 state["log_correlation_result"] = f"Log correlation analysis failed: {error_msg}"
                 state["error"] = error_msg
 
@@ -1642,7 +1643,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error generating PromQL queries: {error_msg}")
+                logger.error(f"Error generating PromQL queries: {str(error_msg)[:200]}")
                 state["error"] = error_msg
 
                 span.update(
@@ -1783,8 +1784,8 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 result = await self.mcp_client.call_tool_direct("query_prometheus", prometheus_params)
                                 successful_queries += 1
                                 logger.info(f"[{get_timestamp()}]  PromQL query {i+1} executed successfully")
-                                logger.info(f"[{get_timestamp()}]  Result is  {result}")
-                                logger.info(f"[{get_timestamp()}]  Result is  {type(result)}")
+                                logger.info(f"[{get_timestamp()}]  Result is  {str(result)[:200]}")
+                                logger.info(f"[{get_timestamp()}]  Result type is  {type(result)}")
 
 
                                 tool_call_span.update(
@@ -1889,7 +1890,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 )
                                 logger.error(f"Failed to store PromQL results: {store_error}")
                                 import traceback
-                                logger.error(f"PromQL store error stack trace: {traceback.format_exc()}")
+                                logger.error(f"PromQL store error stack trace: {str(traceback.format_exc())[:200]}")
 
                                 # Store failed query
                                 query_key = f"query_{i+1}"
@@ -1937,7 +1938,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error fetching metrics: {error_msg}")
+                logger.error(f"Error fetching metrics: {str(error_msg)[:200]}")
                 state["error"] = error_msg
 
                 span.update(
@@ -2095,20 +2096,18 @@ Write a clear performance analysis report that helps the team understand what ha
                 # Store metrics analysis in database immediately with tracing
                 try:
                     with langfuse.start_as_current_span(name="store-metrics-database") as db_span:
-                        results = {
-                            "metrics_analysis": metrics_result,
-                            "structured_metrics": state.get("structured_metrics", {})
-                        }
-                        await self._store_analysis_in_database_new(state, results)
-                        logger.info("Stored metrics analysis in database immediately")
+                        incident_id = await self.storage_manager.extract_incident_id(state["incident_key"])
+                        if incident_id and metrics_result:
+                            await self.storage_manager.store_metrics_data(incident_id, metrics_result)
+                            logger.info("Stored metrics analysis in database immediately")
 
-                        db_span.update(
-                            output={"database_storage_successful": True},
-                            metadata={"status": "success"}
-                        )
+                            db_span.update(
+                                output={"database_storage_successful": True},
+                                metadata={"status": "success"}
+                            )
 
                 except Exception as db_error:
-                    logger.error(f"Failed to store metrics analysis in database: {db_error}")
+                    logger.error(f"Failed to store metrics analysis in database: {str(db_error)[:200]}")
 
                 # Add JIRA comment immediately after metrics analysis completion with tracing
                 with langfuse.start_as_current_span(name="add-jira-comment-metrics") as jira_span:
@@ -2139,7 +2138,7 @@ Write a clear performance analysis report that helps the team understand what ha
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error in metrics correlation analysis: {error_msg}")
+                logger.error(f"Error in metrics correlation analysis: {str(error_msg)[:200]}")
                 state["metrics_correlation_result"] = f"Metrics correlation analysis failed: {error_msg}"
                 state["error"] = error_msg
 
@@ -2291,7 +2290,7 @@ Write a clear performance analysis report that helps the team understand what ha
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error generating correlation summary: {error_msg}")
+                logger.error(f"Error generating correlation summary: {str(error_msg)[:200]}")
                 state["correlation_summary"] = f"Correlation summary generation failed: {error_msg}"
                 state["filtered_promql_queries"] = []
                 state["error"] = error_msg
@@ -2364,7 +2363,7 @@ Write a clear performance analysis report that helps the team understand what ha
                         logger.info("Results stored in Redis successfully")
 
                 except Exception as redis_error:
-                    logger.error(f"Failed to store in Redis: {redis_error}")
+                    logger.error(f"Failed to store in Redis: {str(redis_error)[:200]}")
                     state["redis_stored"] = False
 
                 # Store in PostgreSQL database using storage_manager
@@ -2389,7 +2388,7 @@ Write a clear performance analysis report that helps the team understand what ha
                             logger.error("Failed to store in PostgreSQL")
 
                 except Exception as db_error:
-                    logger.error(f"Failed to store in PostgreSQL: {db_error}")
+                    logger.error(f"Failed to store in PostgreSQL: {str(db_error)[:200]}")
                     state["postgres_stored"] = False
 
                 state["current_step"] = "results_stored"
@@ -2405,7 +2404,7 @@ Write a clear performance analysis report that helps the team understand what ha
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error storing results: {error_msg}")
+                logger.error(f"Error storing results: {str(error_msg)[:200]}")
                 state["error"] = error_msg
 
                 span.update(
@@ -2449,7 +2448,7 @@ Write a clear performance analysis report that helps the team understand what ha
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error in Jira update step: {error_msg}")
+                logger.error(f"Error in Jira update step: {str(error_msg)[:200]}")
                 state["error"] = error_msg
 
                 span.update(
@@ -2614,7 +2613,7 @@ Write a clear performance analysis report that helps the team understand what ha
                         logger.error(f"Error creating initial state: {state_error}")
                         logger.error(f"State error type: {type(state_error).__name__}")
                         import traceback
-                        logger.error(f"State creation stack trace: {traceback.format_exc()}")
+                        logger.error(f"State creation stack trace: {str(traceback.format_exc())[:200]}")
 
                         state_span.update(
                             output={"error": str(state_error)},
@@ -2698,7 +2697,7 @@ Write a clear performance analysis report that helps the team understand what ha
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"Error in LangGraph workflow for incident {incident_key}: {error_msg}")
+                logger.error(f"Error in LangGraph workflow for incident {incident_key}: {str(error_msg)[:200]}")
 
                 error_results = {
                     "error": error_msg,
@@ -2817,7 +2816,7 @@ Write a clear performance analysis report that helps the team understand what ha
                     output={"error": str(e), "cleanup_successful": False},
                     metadata={"status": "error"}
                 )
-                logger.error(f"Error during CorrelationAgent cleanup: {e}")
+                logger.error(f"Error during CorrelationAgent cleanup: {str(e)[:200]}")
             # """Close connections"""
             # if self.mcp_client:
             #     await self.mcp_client.close()
