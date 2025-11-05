@@ -25,7 +25,7 @@ async def cleanup_resources():
     """Cleanup all resources properly."""
     global agent_executor, httpx_client
     
-    logger.info("🔄 Starting cleanup process...")
+    logger.info("Starting cleanup process...")
     
     try:
         # Cleanup agent executor with timeout
@@ -33,50 +33,50 @@ async def cleanup_resources():
             try:
                 if hasattr(agent_executor, 'cleanup'):
                     await asyncio.wait_for(agent_executor.cleanup(), timeout=10.0)
-                    logger.info("✅ Agent executor cleanup completed")
+                    logger.info("Agent executor cleanup completed")
                 elif hasattr(agent_executor, 'agent'):
                     if hasattr(agent_executor.agent, 'cleanup_mcp'):
                         await asyncio.wait_for(agent_executor.agent.cleanup_mcp(), timeout=10.0)
-                        logger.info("✅ Agent MCP cleanup completed")
+                        logger.info("Agent MCP cleanup completed")
                     if hasattr(agent_executor.agent, 'log_fetch_service'):
                         await asyncio.wait_for(agent_executor.agent.log_fetch_service.cleanup(), timeout=10.0)
-                        logger.info("✅ Log fetch service cleanup completed")
+                        logger.info("Log fetch service cleanup completed")
             except asyncio.TimeoutError:
-                logger.warning("⚠️ Agent cleanup timed out, continuing...")
+                logger.warning("Agent cleanup timed out, continuing...")
             except Exception as e:
-                logger.error(f"❌ Error during agent cleanup: {e}")
+                logger.error(f"Error during agent cleanup: {e}")
     except Exception as e:
-        logger.error(f"❌ Error during agent cleanup: {e}")
+        logger.error(f"Error during agent cleanup: {e}")
     
     try:
         # Cleanup HTTP client with timeout
         if httpx_client:
             await asyncio.wait_for(httpx_client.aclose(), timeout=5.0)
-            logger.info("✅ HTTP client cleanup completed")
+            logger.info("HTTP client cleanup completed")
     except asyncio.TimeoutError:
-        logger.warning("⚠️ HTTP client cleanup timed out, continuing...")
+        logger.warning("HTTP client cleanup timed out, continuing...")
     except Exception as e:
-        logger.error(f"❌ Error during HTTP client cleanup: {e}")
+        logger.error(f"Error during HTTP client cleanup: {e}")
     
-    logger.info("✅ Cleanup process completed")
+    logger.info("Cleanup process completed")
 
 def cleanup_sync():
     """Synchronous cleanup for when event loop is closed."""
     global agent_executor, httpx_client
     
-    logger.info("🔄 Starting synchronous cleanup process...")
+    logger.info("Starting synchronous cleanup process...")
     
     try:
         # Basic cleanup without async operations
         if agent_executor:
-            logger.info("✅ Agent executor marked for cleanup")
+            logger.info("Agent executor marked for cleanup")
         
         if httpx_client:
-            logger.info("✅ HTTP client marked for cleanup")
+            logger.info("HTTP client marked for cleanup")
         
-        logger.info("✅ Synchronous cleanup process completed")
+        logger.info("Synchronous cleanup process completed")
     except Exception as e:
-        logger.error(f"❌ Error during synchronous cleanup: {e}")
+        logger.error(f"Error during synchronous cleanup: {e}")
 
 def signal_handler(signum, frame):
     """Handle shutdown signals."""
@@ -95,22 +95,22 @@ def main(host, port):
         host = host
         port = int(port)
         
-        logger.info("🚀 Starting Correlation Agent initialization...")
-        logger.info(f"📋 Configuration: Host={host}, Port={port}")
+        logger.info("Starting Correlation Agent initialization...")
+        logger.info(f"Configuration: Host={host}, Port={port}")
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
         
         # Log environment setup
-        logger.info("🔧 Loading environment configuration...")
+        logger.info("Loading environment configuration...")
         redis_url = os.getenv('REDIS_URL', '')
         
         
 
 
         
-        logger.info("🎯 Setting up agent capabilities...")
+        logger.info("Setting up agent capabilities...")
         capabilities = AgentCapabilities(streaming=True, pushNotifications=True)
         skills = [
             AgentSkill(
@@ -122,7 +122,7 @@ def main(host, port):
             )
         ]
         
-        logger.info("📝 Creating agent card...")
+        logger.info("Creating agent card...")
         agent_card = AgentCard(
             name='Correlation Agent',
             description='Performs log correlation analysis for SRE incidents',
@@ -134,7 +134,7 @@ def main(host, port):
             skills=skills,
         )
         
-        logger.info("🔗 Initializing HTTP client...")
+        logger.info("Initializing HTTP client...")
         httpx_client = httpx.AsyncClient()
         
         logger.info("⚙️ Setting up request handler...")
@@ -148,9 +148,9 @@ def main(host, port):
         logger.info("🏗️ Building server application...")
         server = A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
         
-        logger.info(f"🎉 Starting Correlation Agent server on http://{host}:{port}")
-        logger.info("✅ Server initialization completed successfully")
-        logger.info("🔄 Ready to process incidents in parallel...")
+        logger.info(f"Starting Correlation Agent server on http://{host}:{port}")
+        logger.info("Server initialization completed successfully")
+        logger.info("Ready to process incidents in parallel...")
         
         # Run with cleanup on exit
         try:
@@ -159,14 +159,14 @@ def main(host, port):
             logger.info("🛑 Keyboard interrupt received, shutting down gracefully...")
         finally:
             # Cleanup without using event loop (since it's closed)
-            logger.info("🔄 Starting synchronous cleanup...")
+            logger.info("Starting synchronous cleanup...")
             cleanup_sync()
         
     except Exception as e:
-        logger.error(f'❌ Error during server startup: {e}')
-        logger.error(f'❌ Error type: {type(e).__name__}')
+        logger.error(f'Error during server startup: {e}')
+        logger.error(f'Error type: {type(e).__name__}')
         import traceback
-        logger.error(f'❌ Full traceback: {traceback.format_exc()}')
+        logger.error(f'Full traceback: {traceback.format_exc()}')
         sys.exit(1)
 
 if __name__ == '__main__':
