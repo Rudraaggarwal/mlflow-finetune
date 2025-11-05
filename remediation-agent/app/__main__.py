@@ -16,7 +16,11 @@ from dotenv import load_dotenv
 from app.agent_executor import RemediationAgentExecutor
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 @click.command()
@@ -60,7 +64,7 @@ def main(host, port):
             push_notifier=InMemoryPushNotifier(httpx_client),
         )
         server = A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
-        print(f"🕵️ Starting Remediation Agent on port {port}")
+        print(f"Starting Remediation Agent on port {port}")
         uvicorn.run(server.build(), host=host, port=port)
     except Exception as e:
         logger.error(f'Error: {e}')
