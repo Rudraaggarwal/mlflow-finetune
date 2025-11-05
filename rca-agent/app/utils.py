@@ -151,10 +151,24 @@ def extract_node_id_from_response(content: Any) -> Optional[int]:
     return node_id
 
 
+def escape_sql_string(value: str) -> str:
+    """
+    Escape a string value for SQL query by replacing single quotes
+
+    Args:
+        value: String value to escape
+
+    Returns:
+        Escaped string safe for SQL query
+    """
+    if value is None:
+        return ""
+    return str(value).replace("'", "''")
+
+
 async def execute_database_query_with_retry(
     mcp_client,
     query: str,
-    params: Dict[str, Any] = None,
     max_retries: int = 3,
     retry_delay: int = 1
 ) -> bool:
@@ -163,8 +177,7 @@ async def execute_database_query_with_retry(
 
     Args:
         mcp_client: MCP client instance
-        query: SQL query to execute
-        params: Query parameters
+        query: Fully-formed SQL query to execute (with values already interpolated)
         max_retries: Maximum number of retry attempts
         retry_delay: Initial retry delay in seconds
 
@@ -175,14 +188,11 @@ async def execute_database_query_with_retry(
         logger.warning("No MCP client available for database operations")
         return False
 
-    if params is None:
-        params = {}
-
     for attempt in range(1, max_retries + 1):
         try:
             result = await mcp_client.call_tool_direct(
                 "execute_query",
-                {"query": query, "params": params}
+                {"query": query}
             )
 
             logger.info(f"Database query succeeded on attempt {attempt}")
@@ -228,13 +238,16 @@ async def store_rca_in_database(
         else:
             data_json = json.dumps(str(structured_data))
 
-        query = "UPDATE incidents SET rca_result = :data WHERE id = :id"
-        params = {"data": data_json, "id": incident_id}
+        # Escape the JSON data for SQL
+        escaped_data = escape_sql_string(data_json)
+        escaped_id = escape_sql_string(incident_id)
+
+        # Build query with direct string interpolation
+        query = f"UPDATE incidents SET rca_result = '{escaped_data}' WHERE id = '{escaped_id}'"
 
         success = await execute_database_query_with_retry(
             mcp_client,
             query,
-            params,
             max_retries
         )
 
@@ -269,13 +282,15 @@ async def update_memgraph_node_id_in_database(
         True if successful, False otherwise
     """
     try:
-        query = "UPDATE incidents SET memgraph_agent_node_id = :node_id WHERE id = :incident_id"
-        params = {"node_id": node_id, "incident_id": incident_id}
+        # Escape the incident_id for SQL (node_id is an integer, so no escaping needed)
+        escaped_id = escape_sql_string(incident_id)
+
+        # Build query with direct string interpolation
+        query = f"UPDATE incidents SET memgraph_agent_node_id = {node_id} WHERE id = '{escaped_id}'"
 
         success = await execute_database_query_with_retry(
             mcp_client,
             query,
-            params,
             max_retries
         )
 
