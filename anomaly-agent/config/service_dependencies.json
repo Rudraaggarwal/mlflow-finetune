@@ -1,0 +1,21 @@
+{
+  "service_dependencies": {
+    "catalogue": {
+      "dependencies": ["oemconnector"],
+      "namespace": "paylater"
+    },
+    "oemconnector": {
+      "dependencies": ["catalogue"],
+      "namespace": "paylater"
+    },
+       "catalogueserv": {
+      "dependencies": ["oemconnector"],
+      "namespace": "paylater"
+    },
+      "empipaylater": {
+      "dependencies": ["catalogueserv"],
+      "namespace": "paylater"
+    }
+   
+  }
+}

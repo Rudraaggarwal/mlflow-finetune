@@ -1,0 +1,5 @@
+.env
+.venv
+.dockerignore
+anomaly-agent-secret-k8s.yaml  
+venv
