@@ -27,7 +27,7 @@ class RCAAgentExecutor(AgentExecutor):
         mcp_sse_url = os.getenv("MCP_SSE_URL")
 
         self.agent = SimpleRCAAgent(redis_url=redis_url, database_url=database_url, mcp_sse_url=mcp_sse_url)
-        logger.info("✅ Simple RCA Agent Executor initialized")
+        logger.info("Simple RCA Agent Executor initialized")
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         error = self._validate_request(context)
@@ -47,7 +47,7 @@ class RCAAgentExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task.id, task.contextId)
         
         try:
-            logger.info(f"🚀 Starting RCA processing")
+            logger.info(f"Starting RCA processing")
 
             # Parse query to extract incident data
             query_str = query if isinstance(query, str) else str(query)
@@ -69,7 +69,7 @@ class RCAAgentExecutor(AgentExecutor):
                 'instance': query_data.get('instance', 'Unknown')
             }
 
-            logger.info(f"📨 Processing incident: {incident_id}")
+            logger.info(f"Processing incident: {incident_id}")
             
             langfuse_trace_context = {
                 "trace_id" : query_data.get('current_trace_id'),
@@ -80,15 +80,15 @@ class RCAAgentExecutor(AgentExecutor):
             # Fetch complete incident data from Redis using incident_key if available
             incident_key = query_data.get('incident_key')
             if incident_key:
-                logger.info(f"📋 Fetching complete incident data from Redis using key: {incident_key}")
+                logger.info(f"Fetching complete incident data from Redis using key: {incident_key}")
                 complete_incident_data = await self.agent.fetch_complete_incident_data_from_redis(incident_key,langfuse_trace_context=langfuse_trace_context)
                 if complete_incident_data:
                     # Update incident object with complete data from Redis (including jira_ticket_id)
                     incident.update(complete_incident_data)
-                    logger.info(f"✅ Enhanced incident data with Redis information")
-                    logger.info(f"🎫 Jira ticket ID: {incident.get('jira_ticket_id', 'Not found')}")
+                    logger.info(f"Enhanced incident data with Redis information")
+                    logger.info(f"Jira ticket ID: {incident.get('jira_ticket_id', 'Not found')}")
                 else:
-                    logger.warning("⚠️ Could not fetch complete incident data from Redis")
+                    logger.warning("Could not fetch complete incident data from Redis")
 
 
             current_trace_id = query_data.get('current_trace_id')
@@ -100,9 +100,9 @@ class RCAAgentExecutor(AgentExecutor):
             }
 
             # Generate RCA analysis using new memgraph-enhanced workflow
-            logger.info("🔄 Starting memgraph-enhanced RCA analysis...")
+            logger.info("Starting memgraph-enhanced RCA analysis...")
             rca_result = await self.agent.analyze_root_cause(incident,langfuse_trace_context=langfuse_trace_context)
-            logger.info(f"✅ RCA analysis completed ({len(rca_result)} characters)")
+            logger.info(f"RCA analysis completed ({len(rca_result)} characters)")
 
             # Create response
             response_data = {
@@ -118,14 +118,14 @@ class RCAAgentExecutor(AgentExecutor):
             ], name='rca_result')
 
             await updater.complete()
-            logger.info("✅ RCA agent execution completed successfully")
-            
+            logger.info("RCA agent execution completed successfully")
+
         except Exception as e:
-            logger.error(f'❌ Error in simple RCA agent: {e}')
-            logger.error(f'❌ Error type: {type(e).__name__}')
-            logger.error(f'❌ Error details: {str(e)}')
+            logger.error(f'Error in simple RCA agent: {e}')
+            logger.error(f'Error type: {type(e).__name__}')
+            logger.error(f'Error details: {str(e)}')
             import traceback
-            logger.error(f'❌ Full traceback: {traceback.format_exc()}')
+            logger.error(f'Full traceback: {traceback.format_exc()}')
             raise ServerError(error=InternalError()) from e
 
     def _validate_request(self, context: RequestContext) -> bool:

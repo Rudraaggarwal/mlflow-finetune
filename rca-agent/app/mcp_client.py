@@ -22,41 +22,41 @@ class LangChainMCPClient:
 
     async def connect(self):
         """Connect to MCP server via LangChain adapter using proper configuration with headers."""
-        logger.info(f"🔄 Starting MCP client connection process")
+        logger.info(f"Starting MCP client connection process")
 
         try:
             # Get the proper MCP configuration with headers
-            logger.info("📋 Loading MCP configuration...")
+            logger.info("Loading MCP configuration...")
             mcp_config = get_mcp_config()
 
             if not mcp_config:
-                logger.error("❌ No MCP servers configured. Please check environment variables.")
+                logger.error("No MCP servers configured. Please check environment variables.")
                 raise RuntimeError("No MCP servers configured")
 
-            logger.info(f"✅ Found {len(mcp_config)} MCP server(s): {list(mcp_config.keys())}")
-            logger.info("📊 MCP Configuration Details:")
+            logger.info(f"Found {len(mcp_config)} MCP server(s): {list(mcp_config.keys())}")
+            logger.info("MCP Configuration Details:")
             for server_name, server_config in mcp_config.items():
                 logger.info(f"  - {server_name}:")
                 logger.info(f"    URL: {server_config.get('url', 'Not set')}")
                 logger.info(f"    Transport: {server_config.get('transport', 'Not set')}")
                 logger.info(f"    Headers: {list(server_config.get('headers', {}).keys())}")
 
-            logger.info("🔌 Initializing MultiServerMCPClient...")
+            logger.info("Initializing MultiServerMCPClient...")
             self.client = MultiServerMCPClient(mcp_config)
-            logger.info("✅ MultiServerMCPClient initialized successfully")
+            logger.info("MultiServerMCPClient initialized successfully")
 
-            logger.info("🔧 Getting MCP tools...")
+            logger.info("Getting MCP tools...")
             self.tools = await self.client.get_tools()
-            logger.info(f"✅ Connected successfully. Loaded {len(self.tools)} tools")
+            logger.info(f"Connected successfully. Loaded {len(self.tools)} tools")
 
             if not self.tools:
-                logger.warning("⚠️ No tools loaded from MCP servers")
+                logger.warning("No tools loaded from MCP servers")
 
         except Exception as e:
-            logger.error(f"❌ Connection failed at step: {type(e).__name__}")
-            logger.error(f"❌ Error details: {e}")
+            logger.error(f"Connection failed at step: {type(e).__name__}")
+            logger.error(f"Error details: {e}")
             import traceback
-            logger.error(f"❌ Stack trace: {traceback.format_exc()}")
+            logger.error(f"Stack trace: {traceback.format_exc()}")
             raise
 
     async def close(self):
@@ -91,7 +91,7 @@ class LangChainMCPClient:
     async def call_tool_direct(self, tool_name: str, arguments: dict = None):
         """Call a tool directly with enhanced error handling and logging."""
         if not self.tools:
-            logger.error("❌ No tools available - MCP client may not be connected properly")
+            logger.error("No tools available - MCP client may not be connected properly")
             raise RuntimeError("No tools available - MCP client may not be connected properly")
 
         if arguments is None:
@@ -105,7 +105,7 @@ class LangChainMCPClient:
                 break
 
         if not tool:
-            logger.error(f"❌ Tool '{tool_name}' not found. Available tools: {[t.name for t in self.tools]}")
+            logger.error(f"Tool '{tool_name}' not found. Available tools: {[t.name for t in self.tools]}")
             raise ValueError(f"Tool '{tool_name}' not found. Available tools: {[t.name for t in self.tools]}")
 
         try:
@@ -115,11 +115,11 @@ class LangChainMCPClient:
             return result
 
         except asyncio.TimeoutError:
-            logger.error(f"⏱️ Tool '{tool_name}' call timed out after 60 seconds")
+            logger.error(f"Tool '{tool_name}' call timed out after 60 seconds")
             raise Exception(f"Tool '{tool_name}' call timed out - the MCP server may be unresponsive")
 
         except Exception as e:
-            logger.error(f"❌ Tool '{tool_name}' call failed: {type(e).__name__}: {e}")
+            logger.error(f"Tool '{tool_name}' call failed: {type(e).__name__}: {e}")
             logger.error(f"   Arguments were: {json.dumps(arguments, default=str, indent=2)}")
 
             # If it's a TaskGroup error, suggest reconnection
