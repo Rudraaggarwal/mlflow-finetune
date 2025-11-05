@@ -45,6 +45,12 @@ from .validators import (
     is_valid_query_config
 )
 
+# Import modular handlers
+from .storage_manager import StorageManager
+from .jira_manager import JiraManager
+from .workflow_completion import WorkflowCompletionHandler
+from . import utils
+
 # Initialize Langfuse client
 load_dotenv()
 langfuse = get_client()
@@ -164,10 +170,16 @@ class CorrelationAgent:
             logger.error(f"Failed to create logs directory: {e}, disabling log file writing")
             self.logs_dir = None
 
+        # Initialize modular handlers
+        self.storage_manager = StorageManager(mcp_client=self.mcp_client)
+        self.jira_manager = JiraManager(mcp_client=self.mcp_client, llm=self.llm, langfuse_handler=None)
+        self.workflow_completion = WorkflowCompletionHandler()
+
         # Build workflow graph
         self.graph = self._build_workflow_graph()
         self.langfuse_handler = CallbackHandler()
-        logger.info("CorrelationAgent initialized with LangGraph workflow")
+        self.jira_manager.langfuse_handler = self.langfuse_handler
+        logger.info("CorrelationAgent initialized with LangGraph workflow and modular handlers")
 
     # @observe(name="workflow-graph-construction")
     def _build_workflow_graph(self):
@@ -745,7 +757,7 @@ class CorrelationAgent:
         """Use LLM to extract Grafana alert UID from complex alert payload with tracing."""
         with langfuse.start_as_current_span(name="llm-uid-extraction") as span:
             try:
-                logger.info("🤖 Using LLM to extract Grafana alert UID")
+                logger.info("Using LLM to extract Grafana alert UID")
 
                 span.update(
                     input={"payload_size": len(str(alert_payload)) if alert_payload else 0},
@@ -1147,7 +1159,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
     async def _fetch_logs_node(self, state: CorrelationAgentState) -> CorrelationAgentState:
         """STEP 5: Execute LogQL queries to fetch logs with comprehensive tracing."""
         with langfuse.start_as_current_span(name="fetch-logs") as span:
-            logger.info("📥 STEP 5: Fetching logs using generated LogQL queries")
+            logger.info("STEP 5: Fetching logs using generated LogQL queries")
 
             try:
                 logger.info(f"[{get_timestamp()}] Fetch logs - queries to execute: {len(state.get('generated_logql_queries', []))}")
@@ -3051,19 +3063,26 @@ Write a clear performance analysis report that helps the team understand what ha
                     logger.error(f"Failed to store in Redis: {redis_error}")
                     state["redis_stored"] = False
 
-                # Store in PostgreSQL database with comprehensive tracing
+                # Store in PostgreSQL database using storage_manager
                 try:
                     with langfuse.start_as_current_span(name="postgresql-storage") as db_span:
-                        await self._store_analysis_in_database_new(state, results)
-                        state["postgres_stored"] = True
+                        success = await self.storage_manager.store_all_correlation_results(
+                            state["incident_key"],
+                            state,
+                            results
+                        )
+                        state["postgres_stored"] = success
 
                         db_span.update(
                             input={"incident_key": state["incident_key"], "results_keys": list(results.keys())},
-                            output={"postgres_stored": True},
-                            metadata={"status": "success"}
+                            output={"postgres_stored": success},
+                            metadata={"status": "success" if success else "failed"}
                         )
 
-                        logger.info("Results stored in PostgreSQL successfully")
+                        if success:
+                            logger.info("Results stored in PostgreSQL successfully")
+                        else:
+                            logger.error("Failed to store in PostgreSQL")
 
                 except Exception as db_error:
                     logger.error(f"Failed to store in PostgreSQL: {db_error}")
@@ -3138,229 +3157,8 @@ Write a clear performance analysis report that helps the team understand what ha
     
     # @observe(name="jira-comment-analysis")
     async def _add_jira_comment_for_analysis(self, state: CorrelationAgentState, analysis_type: str, analysis_content: str):
-        """Add a Jira comment for specific analysis step using the same pattern as main agents folder with comprehensive tracing."""
-        with langfuse.start_as_current_span(name="add-jira-comment-analysis") as span:
-            span.update(session_id=str(uuid.uuid4().hex))
-
-            try:
-                # Get the Jira ticket ID from alert payload with tracing
-                with langfuse.start_as_current_span(name="extract-jira-ticket-id") as extract_span:
-                    alert_payload = state.get("alert_payload", {})
-                    jira_ticket_id = alert_payload.get("jira_ticket_id")
-
-                    extract_span.update(
-                        input={"alert_payload_available": bool(alert_payload)},
-                        output={"jira_ticket_id": jira_ticket_id, "ticket_found": bool(jira_ticket_id)},
-                        metadata={"component": "jira_ticket_extraction"}
-                    )
-
-                if not jira_ticket_id:
-                    logger.warning(f"No Jira ticket ID found for {analysis_type} analysis comment")
-                    span.update(
-                        output={"comment_added": False, "reason": "no_jira_ticket_id"},
-                        metadata={"status": "skipped"}
-                    )
-                    return
-
-                # Check if MCP client and Jira tools are available with tracing
-                with langfuse.start_as_current_span(name="validate-jira-tools") as validate_span:
-                    if not self.mcp_client:
-                        logger.warning("No MCP client available, skipping Jira comment")
-                        validate_span.update(
-                            output={"mcp_client_available": False},
-                            metadata={"status": "skipped"}
-                        )
-                        span.update(
-                            output={"comment_added": False, "reason": "no_mcp_client"},
-                            metadata={"status": "skipped"}
-                        )
-                        return
-
-                    available_tools = self.mcp_client.tools if hasattr(self.mcp_client, 'tools') else []
-                    tool_names = [tool.name for tool in available_tools] if available_tools else []
-
-                    has_jira_tool = any('jira_add_comment' in tool_name for tool_name in tool_names)
-
-                    validate_span.update(
-                        output={
-                            "available_tools_count": len(tool_names),
-                            "has_jira_tool": has_jira_tool,
-                            "tool_names": tool_names
-                        },
-                        metadata={"status": "success" if has_jira_tool else "tool_not_available"}
-                    )
-
-                    if not has_jira_tool:
-                        logger.warning("jira_add_comment tool not available, skipping Jira comment")
-                        span.update(
-                            output={"comment_added": False, "reason": "jira_tool_not_available"},
-                            metadata={"status": "skipped"}
-                        )
-                        return
-
-                span.update(
-                    input={
-                        "analysis_type": analysis_type,
-                        "jira_ticket_id": jira_ticket_id,
-                        "analysis_content_length": len(analysis_content),
-                        "mcp_client_available": True,
-                        "jira_tool_available": True
-                    },
-                    metadata={"component": "jira_comment_creation"}
-                )
-
-                # Use the exact same variable pattern as main agents folder with tracing
-                with langfuse.start_as_current_span(name="prepare-jira-variables") as vars_span:
-                    jira_variables = {
-                        "analysis_type": analysis_type,
-                        "alert_name": state.get("alertname", "Unknown Alert"),
-                        "severity": state.get("severity", "Unknown"),
-                        "analysis_content": analysis_content,
-                        "title": analysis_type.title()  # Add title variable as required
-                    }
-
-                    vars_span.update(
-                        output={"variables_prepared": True, "variables_count": len(jira_variables)},
-                        metadata={"status": "success"}
-                    )
-
-                # Get JIRA formatter prompt from Langfuse with tracing
-                with langfuse.start_as_current_span(name="get-jira-formatter-prompt") as prompt_span:
-                    jira_formatter_prompt = get_correlation_prompt("jira-formatter", jira_variables)
-                    logger.info(f"[{get_timestamp()}] Retrieved JIRA formatter prompt from Langfuse for {analysis_type} analysis")
-
-                    prompt_span.update(
-                        input={"prompt_type": "jira-formatter", "variables": list(jira_variables.keys())},
-                        output={"prompt_retrieved": True, "prompt_length": len(jira_formatter_prompt)},
-                        metadata={"status": "success"}
-                    )
-
-                # Use the same user prompt pattern as main agents
-                user_prompt = f"**Task:** Create focused markdown comment showing ONLY the {analysis_type} analysis results based on the provided content and context."
-
-                # Generate comment using LLM with comprehensive tracing
-                with langfuse.start_as_current_span(name="llm-jira-comment-generation") as llm_span:
-                    response = await self.llm.ainvoke(
-                        [
-                            {"role": "system", "content": jira_formatter_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ], config={
-                        "callbacks": [self.langfuse_handler],
-                        "metadata": {
-                            "langfuse_trace_id": langfuse.get_current_trace_id(),
-                            "langfuse_tags": ["correlation_agent"]
-                        }
-                    }
-                    )
-
-                    llm_span.update(
-                        input={
-                            "system_prompt_length": len(jira_formatter_prompt),
-                            "user_prompt_length": len(user_prompt),
-                            "analysis_type": analysis_type
-                        },
-                        output={"comment_length": len(response.content)},
-                        metadata={"llm_task": "jira_comment_formatting"}
-                    )
-
-                # Add header and footer with tracing
-                with langfuse.start_as_current_span(name="format-jira-comment") as format_span:
-                    markdown_comment = f"""{response.content}
-
----
-*{analysis_type.title()} analysis completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}*"""
-
-                    # Sanitize Unicode characters
-                    sanitized_comment = self._sanitize_unicode(markdown_comment)
-
-                    format_span.update(
-                        output={
-                            "original_length": len(markdown_comment),
-                            "sanitized_length": len(sanitized_comment),
-                            "comment_formatted": True
-                        },
-                        metadata={"status": "success"}
-                    )
-
-                # Add comment to Jira ticket using correct tool name with comprehensive retry tracing
-                jira_params = {
-                    "issue_key": jira_ticket_id,
-                    "comment": sanitized_comment
-                }
-
-                logger.info(f"[{get_timestamp()}] 🎫 Adding {analysis_type} comment to Jira ticket: {jira_ticket_id}")
-
-                # Add retry logic for Jira comment failures (like main agents) with detailed tracing
-                max_retries = 3
-                retry_count = 0
-                success = False
-
-                with langfuse.start_as_current_span(name="jira-comment-with-retries") as retry_span:
-                    while retry_count < max_retries and not success:
-                        try:
-                            with langfuse.start_as_current_span(name=f"[tool-called]-jira_add_comment-attempt-{retry_count + 1}") as tool_span:
-                                result = await self.mcp_client.call_tool_direct("jira_add_comment", jira_params)
-                                success = True
-
-                                tool_span.update(
-                                    input={
-                                        "tool_name": "jira_add_comment",
-                                        "issue_key": jira_ticket_id,
-                                        "comment_length": len(sanitized_comment),
-                                        "attempt": retry_count + 1
-                                    },
-                                    output={"execution_successful": True, "result_received": bool(result)},
-                                    metadata={"tool_type": "mcp_jira_comment", "agent_type": "correlation_agent"}
-                                )
-
-                                logger.info(f"[{get_timestamp()}] Successfully added {analysis_type} analysis comment to Jira ticket (attempt {retry_count + 1})")
-
-                        except Exception as retry_error:
-                            retry_count += 1
-                            logger.warning(f"Attempt {retry_count} failed for {analysis_type} Jira comment: {retry_error}")
-
-                            with langfuse.start_as_current_span(name=f"[tool-result]-jira_add_comment-failed-attempt-{retry_count}") as failed_span:
-                                failed_span.update(
-                                    input={"attempt": retry_count, "max_retries": max_retries},
-                                    output={"error": str(retry_error), "will_retry": retry_count < max_retries},
-                                    metadata={"status": "retry_error"}
-                                )
-
-                            if retry_count < max_retries:
-                                await asyncio.sleep(2 ** retry_count)  # Exponential backoff
-                            else:
-                                logger.error(f"All {max_retries} attempts failed for {analysis_type} Jira comment")
-                                raise retry_error
-
-                    retry_span.update(
-                        output={
-                            "final_success": success,
-                            "total_attempts": retry_count + (1 if success else 0),
-                            "max_retries": max_retries
-                        },
-                        metadata={"status": "success" if success else "failed"}
-                    )
-
-                span.update(
-                    output={
-                        "comment_added": success,
-                        "jira_ticket_id": jira_ticket_id,
-                        "analysis_type": analysis_type,
-                        "comment_length": len(sanitized_comment),
-                        "attempts_made": retry_count + (1 if success else 0)
-                    },
-                    metadata={"status": "success" if success else "failed"}
-                )
-
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Failed to add {analysis_type} Jira comment: {error_msg}")
-
-                span.update(
-                    output={"error": error_msg, "comment_added": False},
-                    metadata={"status": "error"}
-                )
-                # Don't set error state as this shouldn't stop the workflow
+        """Add a Jira comment for specific analysis step using jira_manager."""
+        await self.jira_manager.add_analysis_comment(state, analysis_type, analysis_content)
 
     # @observe(name="fallback-jira-comment")
     def _fallback_jira_comment(self, state: CorrelationAgentState) -> str:
@@ -3387,7 +3185,7 @@ Write a clear performance analysis report that helps the team understand what ha
                     metadata={"component": "fallback_comment_generation"}
                 )
 
-                fallback_comment = f"""🤖 *Automated Correlation Analysis Results*
+                fallback_comment = f"""*Automated Correlation Analysis Results*
 
 *Incident Details:*
 • Alert: {alert_name}
@@ -3421,139 +3219,18 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                     metadata={"status": "error"}
                 )
                 logger.error(f"Error generating fallback Jira comment: {e}")
-                return "🤖 *Automated Correlation Analysis Results* - Error generating comment"
+                return "*Automated Correlation Analysis Results* - Error generating comment"
 
     # @observe(name="unicode-sanitization")
     def _sanitize_unicode(self, text: str) -> str:
-        """Sanitize Unicode characters for Jira compatibility with tracing."""
-        with langfuse.start_as_current_span(name="sanitize-unicode-text") as span:
-            try:
-                span.update(
-                    input={"original_length": len(text), "original_encoding": "utf-8"},
-                    metadata={"component": "unicode_sanitization"}
-                )
-
-                # Replace problematic Unicode characters
-                sanitized = text.encode('ascii', 'ignore').decode('ascii')
-
-                # Replace common Unicode punctuation with safe ASCII equivalents
-                replacements = {
-                    """: '"',  # Left double quotation mark
-                    """: '"',  # Right double quotation mark  
-                    "'": "'",  # Left single quotation mark
-                    "'": "'",  # Right single quotation mark
-                    "–": "-",  # En dash
-                    "—": "-",  # Em dash
-                    "…": "..."  # Horizontal ellipsis
-                }
-
-                replacements_made = 0
-                for old, new in replacements.items():
-                    old_count = sanitized.count(old)
-                    if old_count > 0:
-                        sanitized = sanitized.replace(old, new)
-                        replacements_made += old_count
-
-                span.update(
-                    output={
-                        "sanitized_length": len(sanitized),
-                        "characters_removed": len(text) - len(sanitized),
-                        "replacements_made": replacements_made,
-                        "sanitization_successful": True
-                    },
-                    metadata={"status": "success"}
-                )
-
-                return sanitized
-
-            except Exception as e:
-                span.update(
-                    output={"error": str(e), "fallback_to_original": True},
-                    metadata={"status": "error"}
-                )
-                logger.error(f"Error sanitizing Unicode: {e}")
-                return text
+        """Sanitize Unicode characters for Jira compatibility."""
+        return utils.sanitize_unicode(text)
 
     # @observe(name="workflow-completion")
     async def _complete_workflow_node(self, state: CorrelationAgentState) -> CorrelationAgentState:
-        """STEP 11: Complete the workflow with comprehensive tracing."""
-        with langfuse.start_as_current_span(name="complete-correlation-workflow") as span:
-            span.update(session_id=str(uuid.uuid4().hex))
-            logger.info("STEP 11: Completing correlation workflow")
-
-            try:
-                # Gather completion statistics with tracing
-                with langfuse.start_as_current_span(name="gather-completion-stats") as stats_span:
-                    completion_stats = {
-                        "incident_key": state.get('incident_key'),
-                        "log_correlation_completed": bool(state.get('log_correlation_result')),
-                        "metrics_correlation_completed": bool(state.get('metrics_correlation_result')),
-                        "correlation_summary_generated": bool(state.get('correlation_summary')),
-                        "redis_stored": bool(state.get('redis_stored')),
-                        "postgres_stored": bool(state.get('postgres_stored')),
-                        "jira_updated": bool(state.get('jira_updated')),
-                        "workflow_completed": True,
-                        "completion_timestamp": datetime.now().isoformat()
-                    }
-
-                    stats_span.update(
-                        output=completion_stats,
-                        metadata={"status": "success"}
-                    )
-
-                span.update(
-                    input={
-                        "incident_key": state.get('incident_key'),
-                        "current_step": state.get('current_step')
-                    },
-                    output=completion_stats,
-                    metadata={"step": "workflow_completion", "workflow_position": 11}
-                )
-
-                state["completed"] = True
-                state["current_step"] = "workflow_complete"
-
-                # Log final status with tracing
-                with langfuse.start_as_current_span(name="log-final-status") as log_span:
-                    logger.info(f"[{get_timestamp()}] Correlation workflow completed for incident: {state['incident_key']}")
-                    logger.info(f"[{get_timestamp()}] Log correlation: {'' if state.get('log_correlation_result') else ''}")
-                    logger.info(f"[{get_timestamp()}] Metrics correlation: {'' if state.get('metrics_correlation_result') else ''}")
-                    logger.info(f"[{get_timestamp()}] Redis storage: {'' if state.get('redis_stored') else ''}")
-                    logger.info(f"[{get_timestamp()}] PostgreSQL storage: {'' if state.get('postgres_stored') else ''}")
-
-                    log_span.update(
-                        output={
-                            "final_status_logged": True,
-                            "all_steps_completed": all([
-                                state.get('log_correlation_result'),
-                                state.get('metrics_correlation_result'),
-                                state.get('redis_stored'),
-                                state.get('postgres_stored')
-                            ])
-                        },
-                        metadata={"status": "success"}
-                    )
-
-                span.update(
-                    output={
-                        "workflow_completed": True,
-                        "completion_successful": True,
-                        "final_step": "workflow_complete"
-                    },
-                    metadata={"status": "success", "workflow_position": 11}
-                )
-
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Error completing workflow: {error_msg}")
-                state["error"] = error_msg
-
-                span.update(
-                    output={"error": error_msg, "workflow_completed": False},
-                    metadata={"status": "error", "workflow_position": 11}
-                )
-
-        return state
+        """STEP 11: Complete the workflow."""
+        logger.info("STEP 11: Completing correlation workflow")
+        return self.workflow_completion.complete_workflow(state)
 
     # @observe(name="database-analysis-storage")
     async def _store_analysis_in_database_new(self, state: CorrelationAgentState, results: Dict[str, Any]):
@@ -3868,103 +3545,13 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
     
     # @observe(name="fallback-correlation-structure")
     def _create_fallback_correlation_structure(self, correlation_result: str) -> CorrelationArray:
-        """Create fallback structured correlation from text result with comprehensive tracing."""
-        with langfuse.start_as_current_span(name="create-fallback-correlation-structure") as span:
-            try:
-                span.update(
-                    input={
-                        "correlation_result_length": len(correlation_result),
-                        "result_truncated": len(correlation_result) > 500
-                    },
-                    metadata={"component": "fallback_structure_creation"}
-                )
-
-                # Create truncated message if needed
-                truncated_message = correlation_result[:500] + "..." if len(correlation_result) > 500 else correlation_result
-
-                # Create fallback correlation structure
-                fallback_correlation = CorrelationArray(correlated_logs=[
-                    CorrelatedLog(
-                        timestamp=datetime.now().isoformat(),
-                        message=truncated_message,
-                        level="INFO",
-                        reasoning="Correlation analysis completed using fallback structure"
-                    )
-                ])
-
-                span.update(
-                    output={
-                        "fallback_created": True,
-                        "message_length": len(truncated_message),
-                        "structure_type": "CorrelationArray",
-                        "logs_count": 1
-                    },
-                    metadata={"status": "success"}
-                )
-
-                logger.info(f"[{get_timestamp()}] Created fallback correlation structure with message length: {len(truncated_message)}")
-                return fallback_correlation
-
-            except Exception as e:
-                span.update(
-                    output={"error": str(e)},
-                    metadata={"status": "error"}
-                )
-                logger.error(f"Failed to create fallback correlation structure: {e}")
-                # Return minimal structure as last resort
-                return CorrelationArray(correlated_logs=[])
+        """Create fallback structured correlation from text result."""
+        return utils.create_fallback_correlation_structure(correlation_result)
 
     # @observe(name="metric-decision-extraction")
     def _extract_metric_decision_from_correlation(self, structured_correlation) -> bool:
-        """Extract metric-based decision from correlation analysis with comprehensive tracing."""
-        with langfuse.start_as_current_span(name="extract-metric-decision") as span:
-            try:
-                span.update(
-                    input={
-                        "correlation_type": type(structured_correlation).__name__,
-                        "correlation_available": bool(structured_correlation)
-                    },
-                    metadata={"component": "metric_decision_extraction"}
-                )
-
-                decision = True  # Default decision
-                extraction_method = "default"
-
-                # structured_correlation should already be a dict at this point
-                if isinstance(structured_correlation, dict):
-                    decision = structured_correlation.get('is_metric_based', True)
-                    extraction_method = "dict_access"
-                elif hasattr(structured_correlation, 'model_dump'):
-                    data = structured_correlation.model_dump()
-                    decision = data.get('is_metric_based', True)
-                    extraction_method = "model_dump"
-                else:
-                    decision = True
-                    extraction_method = "fallback_default"
-
-                span.update(
-                    output={
-                        "metric_decision": decision,
-                        "extraction_method": extraction_method,
-                        "extraction_successful": True
-                    },
-                    metadata={"status": "success"}
-                )
-
-                logger.info(f"[{get_timestamp()}] Extracted metric decision: {decision} using method: {extraction_method}")
-                return decision
-
-            except Exception as e:
-                span.update(
-                    output={
-                        "error": str(e),
-                        "fallback_decision": True,
-                        "extraction_successful": False
-                    },
-                    metadata={"status": "error"}
-                )
-                logger.error(f"Error extracting metric decision from correlation: {e}")
-                return True  # Safe fallback
+        """Extract metric-based decision from correlation analysis."""
+        return utils.extract_metric_decision_from_correlation(structured_correlation)
 
     # @observe(name="redis-incident-retrieval")
     async def get_incident_from_redis(self, incident_key: str) -> Optional[Dict[str, Any]]:
@@ -4466,151 +4053,14 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
 
     # @observe(name="rca-agent-delegation")
     async def _rca_analysis_node(self, state: CorrelationAgentState) -> CorrelationAgentState:
-        """STEP 12: Call RCA Agent for Root Cause Analysis with comprehensive tracing."""
-        with langfuse.start_as_current_span(name="rca-analysis-delegation") as span:
-            span.update(session_id=str(uuid.uuid4().hex))
-            logger.info("STEP 12: Calling RCA agent for analysis")
-
-            try:
-                span.update(
-                    input={
-                        "log_correlation_available": bool(state.get("log_correlation_result")),
-                        "metrics_correlation_available": bool(state.get("metrics_correlation_result")),
-                        "incident_key": state.get("incident_key")
-                    },
-                    metadata={"step": "rca_analysis_delegation", "workflow_position": 12}
-                )
-
-                # Import RCA agent tool with tracing
-                with langfuse.start_as_current_span(name="import-rca-tool") as import_span:
-                    try:
-                        from .tools.call_rca_agent import send_to_rca_agent
-
-                        import_span.update(
-                            output={"rca_tool_imported": True},
-                            metadata={"status": "success"}
-                        )
-                    except ImportError as import_error:
-                        import_span.update(
-                            output={"error": str(import_error), "rca_tool_imported": False},
-                            metadata={"status": "error"}
-                        )
-                        logger.error(f"Failed to import RCA agent tool: {import_error}")
-                        state["rca_analysis"] = f"RCA Analysis failed: Could not import RCA agent tool - {str(import_error)}"
-                        state["current_step"] = "rca_import_failed"
-                        return state
-
-                # Get correlation and metrics analysis from previous steps
-                log_correlation = state.get("log_correlation_result", "")
-                metrics_correlation = state.get("metrics_correlation_result", "")
-
-                if not log_correlation and not metrics_correlation:
-                    logger.warning("No correlation analysis available for RCA")
-                    state["rca_analysis"] = "RCA Analysis could not be completed: No correlation data available"
-                    state["current_step"] = "rca_partial"
-
-                    span.update(
-                        output={"rca_delegated": False, "reason": "no_correlation_data"},
-                        metadata={"status": "skipped", "workflow_position": 12}
-                    )
-                    return state
-
-                logger.info("Calling RCA agent with correlation data")
-
-                # Prepare incident data for RCA agent with tracing  
-                with langfuse.start_as_current_span(name="prepare-rca-incident-data") as prepare_span:
-                    # Extract incident_id from incident_key (e.g., "incidents:188:main" -> "188")
-                    incident_key = state.get("incident_key", "unknown")
-                    incident_id = incident_key.split(":")[1] if ":" in incident_key and len(incident_key.split(":")) > 1 else incident_key
-
-                    incident_data = {
-                        "incident_key": incident_key,
-                        "alert_name": state.get("alertname", "Unknown Alert"),
-                        "alertname": state.get("alertname", "Unknown Alert"),
-                        "service": state.get("service", "Unknown Service"),
-                        "severity": state.get("severity", "unknown"),
-                        "description": state.get("description", "RCA analysis request"),
-                        "instance": state.get("instance", state.get("service", "unknown")),
-                        "timestamp": state.get("timestamp", ""),
-                        "jira_ticket_id": state.get("alert_payload", {}).get("jira_ticket_id", "")
-                    }
-
-                    prepare_span.update(
-                        output={
-                            "incident_data_prepared": True,
-                            "incident_id": incident_id,
-                            "incident_data_keys": list(incident_data.keys()),
-                            "has_jira_ticket": bool(incident_data["jira_ticket_id"])
-                        },
-                        metadata={"status": "success"}
-                    )
-
-                print("\nTrace context info\ncurrent_trace_id: ",current_trace_id)
-                print("\ncurrent_observation_id",current_observation_id)
-
-                # Call RCA agent with tracing
-                with langfuse.start_as_current_span(name="[tool-called]-send_to_rca_agent") as rca_span:
-                    rca_status = await send_to_rca_agent(
-                        incident_id=incident_id,
-                        incident_data=incident_data,
-                        correlation_data=log_correlation,
-                        metrics_analysis=metrics_correlation,
-                        current_trace_id=current_trace_id,
-                        current_observation_id=current_observation_id,
-                        global_session_id= _global_session_id
-                    )
-
-                    rca_span.update(
-                        input={
-                            "incident_id": incident_id,
-                            "correlation_data_length": len(log_correlation),
-                            "metrics_analysis_length": len(metrics_correlation)
-                        },
-                        output={
-                            "rca_status": str(rca_status),
-                            "delegation_successful": True
-                        },
-                        metadata={"tool_type": "rca_agent_delegation", "agent_type": "correlation_agent"}
-                    )
-
-                # Handle RCA response with tracing
-                with langfuse.start_as_current_span(name="[tool-result]-send_to_rca_agent") as result_span:
-                    logger.info(f"[{get_timestamp()}] RCA agent request sent: {rca_status}")
-                    state["rca_analysis"] = f"RCA analysis request sent to RCA agent. Status: {rca_status}"
-                    state["current_step"] = "rca_delegated"
-
-                    result_span.update(
-                        output={
-                            "rca_status_received": True,
-                            "rca_status": str(rca_status),
-                            "analysis_stored": True
-                        },
-                        metadata={"status": "success"}
-                    )
-
-                span.update(
-                    output={
-                        "rca_delegation_successful": True,
-                        "rca_status": str(rca_status),
-                        "incident_id": incident_id,
-                        "correlation_data_sent": bool(log_correlation),
-                        "metrics_data_sent": bool(metrics_correlation)
-                    },
-                    metadata={"status": "success", "workflow_position": 12}
-                )
-
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Error sending request to RCA agent: {error_msg}")
-                state["rca_analysis"] = f"Failed to send request to RCA agent: {error_msg}"
-                state["current_step"] = "rca_failed"
-
-                span.update(
-                    output={"error": error_msg, "rca_delegation_successful": False},
-                    metadata={"status": "error", "workflow_position": 12}
-                )
-
-        return state
+        """STEP 12: Call RCA Agent for Root Cause Analysis."""
+        logger.info("STEP 12: Calling RCA agent for analysis")
+        return await self.workflow_completion.delegate_to_rca_agent(
+            state,
+            current_trace_id,
+            current_observation_id,
+            _global_session_id
+        )
 
     # @observe(name="client-cleanup")
     async def close(self):
