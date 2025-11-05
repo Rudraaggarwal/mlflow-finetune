@@ -378,8 +378,7 @@ async def store_remediation_in_database(
             # Build UPDATE query
             update_query = f"""
             UPDATE incidents
-            SET remediation_result = '{escaped_data}',
-                updated_at = NOW()
+            SET remediation_result = '{escaped_data}'
             WHERE id = {incident_id}
             RETURNING id;
             """

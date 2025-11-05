@@ -14,7 +14,7 @@ from a2a.types import (
 )
 from a2a.utils import new_agent_text_message, new_task
 from a2a.utils.errors import ServerError
-from app.simple_remediation_agent import SimpleRemediationAgent
+from app.remediation_agent import SimpleRemediationAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
