@@ -1,5 +1,5 @@
 """
-MCP server configuration management for RCA Agent
+MCP server configuration management for Remediation Agent
 Supports Jira, Postgres, and Redis integrations
 """
 
@@ -13,14 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 class MCPConfiguration:
-    """Centralized MCP server configuration management for RCA agent."""
+    """Centralized MCP server configuration management for Remediation agent."""
 
     def __init__(self):
         self.config_cache: Optional[Dict[str, Any]] = None
         self._load_config()
 
     def _load_config(self):
-        """Load and validate MCP server configurations for RCA agent."""
+        """Load and validate MCP server configurations for Remediation agent."""
         config = {}
 
         # Configure Jira MCP server if available
@@ -34,7 +34,7 @@ class MCPConfiguration:
                     "X-JIRA-Api-Token": os.getenv("JIRA_API_TOKEN", "your-jira-api-token"),
                 }
             }
-            logger.info("Jira MCP server configured for RCA agent")
+            logger.info("Jira MCP server configured for Remediation agent")
 
         # Configure Postgres MCP server if available
         if os.getenv("POSTGRES_MCP_SERVER"):
@@ -49,14 +49,14 @@ class MCPConfiguration:
                     "X-DB-Password": os.getenv("POSTGRES_PASSWORD", "postgres"),
                 }
             }
-            logger.info("Postgres MCP server configured for RCA agent")
+            logger.info("Postgres MCP server configured for Remediation agent")
 
 
         if not config:
-            logger.warning("No MCP servers configured - RCA agent will run with limited functionality")
+            logger.warning("No MCP servers configured - Remediation agent will run with limited functionality")
 
         self.config_cache = config
-        logger.info(f"RCA agent MCP configuration loaded with {len(config)} servers")
+        logger.info(f"Remediation agent MCP configuration loaded with {len(config)} servers")
 
     def get_config(self) -> Dict[str, Any]:
         """Get the complete MCP server configuration."""
@@ -86,7 +86,7 @@ def get_mcp_config() -> Dict[str, Any]:
 
 
 def get_mcp_health() -> Dict[str, Any]:
-    """Get health status of MCP servers for RCA agent."""
+    """Get health status of MCP servers for Remediation agent."""
     servers = {
         "jira-mcp": {
             "enabled": bool(os.getenv("JIRA_MCP_SERVER")),
