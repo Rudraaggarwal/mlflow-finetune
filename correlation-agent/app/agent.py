@@ -30,6 +30,21 @@ from langfuse.langchain import CallbackHandler
 # Langfuse imports for comprehensive observability
 from langfuse import get_client, observe
 
+# Import new utility modules
+from .prompts import get_prompt, get_jira_template
+from .logging_utils import get_logger, truncate_large_result, get_timestamp
+from .validators import (
+    is_successful_promql_result,
+    is_successful_logql_result,
+    get_result_count,
+    has_prometheus_data,
+    has_loki_data,
+    count_total_metrics,
+    count_total_logs,
+    filter_successful_queries,
+    is_valid_query_config
+)
+
 # Initialize Langfuse client
 load_dotenv()
 langfuse = get_client()
@@ -140,19 +155,19 @@ class CorrelationAgent:
         self.logs_dir = Path("logs")
         try:
             self.logs_dir.mkdir(exist_ok=True)
-            logger.info(f"✅ Logs directory initialized: {self.logs_dir.absolute()}")
+            logger.info(f"[{get_timestamp()}] Logs directory initialized: {self.logs_dir.absolute()}")
         except PermissionError:
-            logger.warning(f"⚠️ Permission denied creating logs directory {self.logs_dir.absolute()}, using temporary directory")
+            logger.warning(f"Permission denied creating logs directory {self.logs_dir.absolute()}, using temporary directory")
             import tempfile
             self.logs_dir = Path(tempfile.mkdtemp(prefix="correlation_logs_"))
         except Exception as e:
-            logger.error(f"❌ Failed to create logs directory: {e}, disabling log file writing")
+            logger.error(f"Failed to create logs directory: {e}, disabling log file writing")
             self.logs_dir = None
 
         # Build workflow graph
         self.graph = self._build_workflow_graph()
         self.langfuse_handler = CallbackHandler()
-        logger.info("✅ CorrelationAgent initialized with LangGraph workflow")
+        logger.info("CorrelationAgent initialized with LangGraph workflow")
 
     # @observe(name="workflow-graph-construction")
     def _build_workflow_graph(self):
@@ -321,7 +336,7 @@ class CorrelationAgent:
     async def initialize_mcp_client(self):
         """Initialize MCP client connection with observability."""
         with langfuse.start_as_current_span(name="mcp-client-connect") as span:
-            logger.info("🔄 Starting MCP client initialization...")
+            logger.info("Starting MCP client initialization...")
 
             if self.mcp_client:
                 try:
@@ -330,7 +345,7 @@ class CorrelationAgent:
                         metadata={"component": "mcp-initialization"}
                     )
 
-                    logger.info("📡 Attempting to connect MCP client...")
+                    logger.info("Attempting to connect MCP client...")
                     await self.mcp_client.connect()
 
                     span.update(
@@ -338,7 +353,7 @@ class CorrelationAgent:
                         metadata={"status": "success"}
                     )
 
-                    logger.info("✅ MCP client connected successfully")
+                    logger.info("MCP client connected successfully")
 
                 except Exception as e:
                     span.update(
@@ -346,16 +361,16 @@ class CorrelationAgent:
                         metadata={"status": "error"}
                     )
 
-                    logger.error(f"❌ Failed to connect MCP client: {e}")
+                    logger.error(f"Failed to connect MCP client: {e}")
                     import traceback
-                    logger.error(f"❌ MCP connection stack trace: {traceback.format_exc()}")
+                    logger.error(f"MCP connection stack trace: {traceback.format_exc()}")
                     self.mcp_client = None
             else:
                 span.update(
                     output={"mcp_client_configured": False},
                     metadata={"status": "skipped"}
                 )
-                logger.warning("⚠️ No MCP client configured - continuing without MCP tools")
+                logger.warning("No MCP client configured - continuing without MCP tools")
 
     # @observe(name="error-check-routing")
     def _check_for_errors(self, state: CorrelationAgentState) -> str:
@@ -514,7 +529,7 @@ class CorrelationAgent:
                     metadata={"status": "success", "workflow_position": 1}
                 )
 
-                logger.info(f"Parsed alert: {state['alertname']} - {state['severity']}")
+                logger.info(f"[{get_timestamp()}] Parsed alert: {state['alertname']} - {state['severity']}")
 
             except Exception as e:
                 error_msg = str(e)
@@ -542,7 +557,7 @@ class CorrelationAgent:
                     metadata={"step": "service_dependencies", "workflow_position": 2}
                 )
 
-                logger.info(f"Getting dependencies for service: {service_name}")
+                logger.info(f"[{get_timestamp()}] Getting dependencies for service: {service_name}")
 
                 # Call the service dependencies tool with tracing
                 with langfuse.start_as_current_span(name="service-dependencies-tool-call") as tool_span:
@@ -561,7 +576,7 @@ class CorrelationAgent:
                         metadata={"tool_execution": "service_dependencies"}
                     )
 
-                    logger.info(f"Service dependencies tool result: {dependencies_result}")
+                    logger.info(f"[{get_timestamp()}] Service dependencies tool result: {dependencies_result}")
 
                 # Parse dependencies from JSON result
                 if isinstance(dependencies_result, str):
@@ -595,11 +610,11 @@ class CorrelationAgent:
                                     metadata={"status": "success"}
                                 )
 
-                                logger.info(f"Service: {service_name}")
-                                logger.info(f"Namespace: {namespace}")
-                                logger.info(f"Direct dependencies: {direct_deps}")
-                                logger.info(f"All recursive dependencies: {all_deps}")
-                                logger.info(f"Total services to check: {len(all_services)}")
+                                logger.info(f"[{get_timestamp()}] Service: {service_name}")
+                                logger.info(f"[{get_timestamp()}] Namespace: {namespace}")
+                                logger.info(f"[{get_timestamp()}] Direct dependencies: {direct_deps}")
+                                logger.info(f"[{get_timestamp()}] All recursive dependencies: {all_deps}")
+                                logger.info(f"[{get_timestamp()}] Total services to check: {len(all_services)}")
 
                         except json.JSONDecodeError as e:
                             logger.error(f"Failed to parse service dependencies JSON: {e}")
@@ -622,7 +637,7 @@ class CorrelationAgent:
                     metadata={"status": "success", "workflow_position": 2}
                 )
 
-                logger.info(f"Final service dependencies list: {state['service_dependencies']}")
+                logger.info(f"[{get_timestamp()}] Final service dependencies list: {state['service_dependencies']}")
 
             except Exception as e:
                 error_msg = str(e)
@@ -641,7 +656,7 @@ class CorrelationAgent:
     async def _extract_grafana_info_node(self, state: CorrelationAgentState) -> CorrelationAgentState:
         """STEP 3: Extract Grafana alert information if available with comprehensive tracing."""
         with langfuse.start_as_current_span(name="extract-grafana-info") as span:
-            logger.info("🔍 STEP 3: Extracting Grafana alert information")
+            logger.info("STEP 3: Extracting Grafana alert information")
 
             try:
                 alert_payload = state["alert_payload"]
@@ -654,8 +669,8 @@ class CorrelationAgent:
                     metadata={"step": "grafana_extraction", "workflow_position": 3}
                 )
 
-                logger.info(f"📋 Alert payload type: {type(alert_payload)}")
-                logger.info(f"📋 Alert payload keys: {list(alert_payload.keys()) if isinstance(alert_payload, dict) else 'Not a dict'}")
+                logger.info(f"[{get_timestamp()}] Alert payload type: {type(alert_payload)}")
+                logger.info(f"[{get_timestamp()}] Alert payload keys: {list(alert_payload.keys()) if isinstance(alert_payload, dict) else 'Not a dict'}")
 
                 # Use LLM to extract Grafana alert UID from alert payload with tracing
                 with langfuse.start_as_current_span(name="grafana-uid-extraction") as uid_span:
@@ -700,21 +715,21 @@ class CorrelationAgent:
                         metadata={"status": "success", "workflow_position": 3}
                     )
 
-                    logger.info(f"✅ Successfully extracted Grafana info: {grafana_info}")
+                    logger.info(f"[{get_timestamp()}] Successfully extracted Grafana info: {grafana_info}")
 
                 except Exception as assign_error:
-                    logger.error(f"❌ Error assigning grafana_info to state: {assign_error}")
-                    logger.error(f"❌ Assign error type: {type(assign_error).__name__}")
+                    logger.error(f"Error assigning grafana_info to state: {assign_error}")
+                    logger.error(f"Assign error type: {type(assign_error).__name__}")
                     import traceback
-                    logger.error(f"❌ Assign stack trace: {traceback.format_exc()}")
+                    logger.error(f"Assign stack trace: {traceback.format_exc()}")
                     raise
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"❌ Error extracting Grafana info: {error_msg}")
-                logger.error(f"❌ Error type: {type(e).__name__}")
+                logger.error(f"Error extracting Grafana info: {error_msg}")
+                logger.error(f"Error type: {type(e).__name__}")
                 import traceback
-                logger.error(f"❌ Stack trace: {traceback.format_exc()}")
+                logger.error(f"Stack trace: {traceback.format_exc()}")
                 state["grafana_alert_info"] = {}
                 state["error"] = error_msg
 
@@ -777,14 +792,14 @@ If no UID is found, return "NONE".
                         output={"extracted_uid": extracted_uid, "extraction_successful": True},
                         metadata={"status": "success"}
                     )
-                    logger.info(f"✅ LLM extracted Grafana UID: {extracted_uid}")
+                    logger.info(f"[{get_timestamp()}] LLM extracted Grafana UID: {extracted_uid}")
                     return extracted_uid
                 else:
                     span.update(
                         output={"extraction_successful": False, "result": extracted_uid},
                         metadata={"status": "no_uid_found"}
                     )
-                    logger.info("⚠️ No Grafana UID found by LLM")
+                    logger.info("No Grafana UID found by LLM")
                     return ""
 
             except Exception as e:
@@ -792,7 +807,7 @@ If no UID is found, return "NONE".
                     output={"error": str(e)},
                     metadata={"status": "error"}
                 )
-                logger.error(f"❌ Failed to extract Grafana UID with LLM: {e}")
+                logger.error(f"Failed to extract Grafana UID with LLM: {e}")
                 return ""
 
     # @observe(name="grafana-alert-info-fetch")
@@ -805,7 +820,7 @@ If no UID is found, return "NONE".
                         output={"fetch_attempted": False, "reason": "no_uid"},
                         metadata={"status": "skipped"}
                     )
-                    logger.info("⚠️ No alert UID provided, skipping Grafana alert rule fetch")
+                    logger.info("No alert UID provided, skipping Grafana alert rule fetch")
                     return {}
 
                 if not self.mcp_client:
@@ -813,7 +828,7 @@ If no UID is found, return "NONE".
                         output={"fetch_attempted": False, "reason": "no_mcp_client"},
                         metadata={"status": "skipped"}
                     )
-                    logger.warning("⚠️ No MCP client available for get_alert_rule_by_uid")
+                    logger.warning("No MCP client available for get_alert_rule_by_uid")
                     return {}
 
                 span.update(
@@ -831,10 +846,10 @@ If no UID is found, return "NONE".
                         output={"fetch_attempted": False, "reason": "tool_not_available"},
                         metadata={"status": "skipped"}
                     )
-                    logger.warning("⚠️ get_alert_rule_by_uid tool not available")
+                    logger.warning("get_alert_rule_by_uid tool not available")
                     return {}
 
-                logger.info(f"🔍 Fetching Grafana alert rule for UID: {alert_uid}")
+                logger.info(f"[{get_timestamp()}] Fetching Grafana alert rule for UID: {alert_uid}")
 
                 # Call the get_alert_rule_by_uid tool with tracing
                 with langfuse.start_as_current_span(name="mcp-tool-call") as tool_span:
@@ -853,23 +868,23 @@ If no UID is found, return "NONE".
                         output={"fetch_attempted": True, "result_received": False},
                         metadata={"status": "no_result"}
                     )
-                    logger.warning("⚠️ No alert rule info returned from get_alert_rule_by_uid")
+                    logger.warning("No alert rule info returned from get_alert_rule_by_uid")
                     return {}
 
                 # Handle both string and dict responses from MCP tool
                 if isinstance(raw_result, str):
                     try:
                         full_result = json.loads(raw_result)
-                        logger.info("📋 Parsed string response from MCP tool to dict")
+                        logger.info("Parsed string response from MCP tool to dict")
                     except json.JSONDecodeError as json_err:
-                        logger.warning(f"⚠️ Could not parse MCP tool response as JSON: {json_err}")
+                        logger.warning(f"Could not parse MCP tool response as JSON: {json_err}")
                         logger.warning(f"Raw response: {raw_result[:200]}...")
                         return {}
                 elif isinstance(raw_result, dict):
                     full_result = raw_result
-                    logger.info("📋 Received dict response from MCP tool")
+                    logger.info("Received dict response from MCP tool")
                 else:
-                    logger.warning(f"⚠️ Unexpected response type from MCP tool: {type(raw_result)}")
+                    logger.warning(f"Unexpected response type from MCP tool: {type(raw_result)}")
                     return {}
 
                 # Extract only relevant data to reduce payload size
@@ -902,8 +917,8 @@ If no UID is found, return "NONE".
                     metadata={"status": "success"}
                 )
 
-                logger.info(f"✅ Successfully fetched alert rule: {relevant_data.get('title')}")
-                logger.info(f"📋 Found {len(relevant_data['alert_expressions'])} expressions")
+                logger.info(f"[{get_timestamp()}] Successfully fetched alert rule: {relevant_data.get('title')}")
+                logger.info(f"[{get_timestamp()}] Found {len(relevant_data['alert_expressions'])} expressions")
 
                 return relevant_data
 
@@ -912,20 +927,20 @@ If no UID is found, return "NONE".
                     output={"error": str(e)},
                     metadata={"status": "error"}
                 )
-                logger.error(f"❌ Failed to fetch Grafana alert rule info: {e}")
+                logger.error(f"Failed to fetch Grafana alert rule info: {e}")
                 return {}
 
     # @observe(name="logql-generation")
     async def _generate_logql_node(self, state: CorrelationAgentState) -> CorrelationAgentState:
         """STEP 4: Generate LogQL queries using LLM with comprehensive tracing."""
         with langfuse.start_as_current_span(name="generate-logql") as span:
-            logger.info("🔍 STEP 4: Generating LogQL queries")
+            logger.info("STEP 4: Generating LogQL queries")
 
             try:
-                logger.info(f"🔧 LogQL node - state keys: {list(state.keys())}")
-                logger.info(f"🔧 LogQL node - service: {state.get('service')}")
-                logger.info(f"🔧 LogQL node - timestamp: {state.get('timestamp')}")
-                logger.info(f"🔧 LogQL node - dependencies: {state.get('service_dependencies')}")
+                logger.info(f"[{get_timestamp()}] LogQL node - state keys: {list(state.keys())}")
+                logger.info(f"[{get_timestamp()}] LogQL node - service: {state.get('service')}")
+                logger.info(f"LogQL node - timestamp: {state.get('timestamp')}")
+                logger.info(f"[{get_timestamp()}] LogQL node - dependencies: {state.get('service_dependencies')}")
                 span.update(
                     input={
                         "service": state.get('service'),
@@ -938,7 +953,7 @@ If no UID is found, return "NONE".
                 # Initialize queries list if not exists
                 if "generated_logql_queries" not in state or not state["generated_logql_queries"]:
                     state["generated_logql_queries"] = []
-                    logger.info("📝 Initialized empty logql_queries list")
+                    logger.info("Initialized empty logql_queries list")
 
                 # Create LLM prompt for LogQL generation
                 logql_generation_prompt = f"""
@@ -1037,30 +1052,30 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
                         # Add to existing queries
                         state["generated_logql_queries"].extend(new_queries)
-                        logger.info(f"Generated {len(new_queries)} LogQL queries")
+                        logger.info(f"[{get_timestamp()}] Generated {len(new_queries)} LogQL queries")
 
                     else:
                         raise ValueError("No valid JSON found in LLM response")
 
                 except (json.JSONDecodeError, ValueError) as e:
-                    logger.error(f"❌ Failed to parse LogQL queries: {e}")
+                    logger.error(f"Failed to parse LogQL queries: {e}")
                     # Create fallback query with safe timestamp handling
                     with langfuse.start_as_current_span(name="fallback-query-creation") as fallback_span:
                         try:
                             timestamp_str = str(state["timestamp"])
                             service_name = str(state["service"])
-                            logger.info(f"🔧 Creating fallback query for service: {service_name}, timestamp: {timestamp_str}")
+                            logger.info(f"Creating fallback query for service: {service_name}, timestamp: {timestamp_str}")
 
                             # Safe timestamp parsing
                             if timestamp_str and timestamp_str != "":
                                 try:
                                     timestamp_obj = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                                    logger.info(f"✅ Parsed timestamp successfully: {timestamp_obj}")
+                                    logger.info(f"Parsed timestamp successfully: {timestamp_obj}")
                                 except ValueError as ts_error:
-                                    logger.error(f"❌ Timestamp parsing failed: {ts_error}")
+                                    logger.error(f"Timestamp parsing failed: {ts_error}")
                                     timestamp_obj = datetime.now()
                             else:
-                                logger.warning("⚠️ Empty timestamp, using current time")
+                                logger.warning("Empty timestamp, using current time")
                                 timestamp_obj = datetime.now()
 
                             start_time = (timestamp_obj - timedelta(minutes=2)).isoformat()
@@ -1079,10 +1094,10 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                             # Safely append to the list
                             if isinstance(state["generated_logql_queries"], list):
                                 state["generated_logql_queries"].append(fallback_query)
-                                logger.info("✅ Created and added fallback LogQL query")
+                                logger.info("Created and added fallback LogQL query")
                             else:
                                 state["generated_logql_queries"] = [fallback_query]
-                                logger.info("✅ Initialized queries list with fallback query")
+                                logger.info("Initialized queries list with fallback query")
 
                             fallback_span.update(
                                 output={"fallback_query_created": True},
@@ -1090,9 +1105,9 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                             )
 
                         except Exception as fallback_error:
-                            logger.error(f"❌ Failed to create fallback query: {fallback_error}")
+                            logger.error(f"Failed to create fallback query: {fallback_error}")
                             import traceback
-                            logger.error(f"❌ Fallback error stack trace: {traceback.format_exc()}")
+                            logger.error(f"Fallback error stack trace: {traceback.format_exc()}")
                             state["error"] = f"Failed to generate LogQL queries: {str(e)}"
 
                             fallback_span.update(
@@ -1111,14 +1126,14 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                     metadata={"status": "success", "workflow_position": 4}
                 )
 
-                logger.info(f"Total LogQL queries generated: {len(state['generated_logql_queries'])}")
+                logger.info(f"[{get_timestamp()}] Total LogQL queries generated: {len(state['generated_logql_queries'])}")
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"❌ Error generating LogQL queries: {error_msg}")
-                logger.error(f"❌ Error type: {type(e).__name__}")
+                logger.error(f"Error generating LogQL queries: {error_msg}")
+                logger.error(f"Error type: {type(e).__name__}")
                 import traceback
-                logger.error(f"❌ LogQL generation stack trace: {traceback.format_exc()}")
+                logger.error(f"LogQL generation stack trace: {traceback.format_exc()}")
                 state["error"] = error_msg
 
                 span.update(
@@ -1135,7 +1150,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
             logger.info("📥 STEP 5: Fetching logs using generated LogQL queries")
 
             try:
-                logger.info(f"🔧 Fetch logs - queries to execute: {len(state.get('generated_logql_queries', []))}")
+                logger.info(f"[{get_timestamp()}] Fetch logs - queries to execute: {len(state.get('generated_logql_queries', []))}")
                 queries_count = len(state.get('generated_logql_queries', []))
                 span.update(
                     input={"queries_to_execute": queries_count},
@@ -1145,7 +1160,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                 # Initialize fetched_logs if not exists
                 if "fetched_logs" not in state:
                     state["fetched_logs"] = {}
-                    logger.info("📝 Initialized empty fetched_logs dict")
+                    logger.info("Initialized empty fetched_logs dict")
 
                 # Get MCP tools for log querying
                 if not self.mcp_client:
@@ -1153,7 +1168,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                         output={"logs_fetched": False, "reason": "no_mcp_client"},
                         metadata={"status": "skipped"}
                     )
-                    logger.warning("⚠️ No MCP client available, skipping log fetching")
+                    logger.warning("No MCP client available, skipping log fetching")
                     state["fetched_logs"] = {}
                     state["current_step"] = "logs_fetched"
                     state["logs_need_more_fetching"] = False
@@ -1162,7 +1177,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                 # Check if query_loki_logs tool is available
                 available_tools = self.mcp_client.tools if hasattr(self.mcp_client, 'tools') else []
                 tool_names = [tool.name for tool in available_tools] if available_tools else []
-                logger.info(f"🔧 Available MCP tools: {tool_names}")
+                logger.info(f"[{get_timestamp()}] Available MCP tools: {tool_names}")
 
                 has_loki_tool = any('query_loki_logs' in tool_name.lower() for tool_name in tool_names)
 
@@ -1171,21 +1186,21 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                         output={"logs_fetched": False, "reason": "no_loki_tool"},
                         metadata={"status": "skipped"}
                     )
-                    logger.warning("⚠️ No query_loki_logs tool available, continuing without logs")
+                    logger.warning("No query_loki_logs tool available, continuing without logs")
                     state["fetched_logs"] = {}
                     state["current_step"] = "logs_fetched"
                     state["logs_need_more_fetching"] = False
                     return state
 
-                logger.info("🔧 Found query_loki_logs tool, proceeding with log queries")
+                logger.info("Found query_loki_logs tool, proceeding with log queries")
 
                 queries_to_execute = state.get("generated_logql_queries", [])
                 # Limit to maximum 6 queries to avoid overwhelming the system
                 if len(queries_to_execute) > 6:
                     queries_to_execute = queries_to_execute[:6]
-                    logger.info(f"⚠️ Limited queries from {len(state.get('generated_logql_queries', []))} to 6 for performance")
+                    logger.info(f"[{get_timestamp()}] Limited queries from {len(state.get('generated_logql_queries', []))} to 6 for performance")
 
-                logger.info(f"🔧 Executing {len(queries_to_execute)} LogQL queries")
+                logger.info(f"[{get_timestamp()}] Executing {len(queries_to_execute)} LogQL queries")
 
                 # Initialize tracking variables for tool call tracing
                 mcp_calls = 0
@@ -1197,10 +1212,10 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                 for i, query_config in enumerate(queries_to_execute):
                     try:
                         if not isinstance(query_config, dict):
-                            logger.error(f"❌ Query config {i+1} is not a dict: {type(query_config)}")
+                            logger.error(f"Query config {i+1} is not a dict: {type(query_config)}")
                             continue
 
-                        logger.info(f"🔧 Executing LogQL query {i+1}: {query_config.get('query', 'No query')}")
+                        logger.info(f"[{get_timestamp()}] Executing LogQL query {i+1}: {query_config.get('query', 'No query')}")
 
                         # **ENHANCED: Track individual tool call with Langfuse**
                         with langfuse.start_as_current_span(
@@ -1217,7 +1232,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                     "endRfc3339": str(query_config.get("end_time", "")),      # Use 'endRfc3339' instead of 'end'
                                     "limit": int(query_config.get("limit", 15))
                                 }
-                                logger.info(f"🔧 Query params (corrected format): {query_params}")
+                                logger.info(f"[{get_timestamp()}] Query params (corrected format): {query_params}")
 
                                 tool_info = {
                                     "tool_name": "query_loki_logs",
@@ -1243,7 +1258,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 )
 
                             except Exception as param_error:
-                                logger.error(f"❌ Failed to build query params: {param_error}")
+                                logger.error(f"Failed to build query params: {param_error}")
                                 tool_call_span.update(
                                     output={"error": str(param_error)},
                                     metadata={"status": "parameter_error"}
@@ -1254,7 +1269,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                             try:
                                 result = await self.mcp_client.call_tool_direct("query_loki_logs", query_params)
                                 successful_queries += 1
-                                logger.info(f"✅ Query {i+1} executed successfully")
+                                logger.info(f"[{get_timestamp()}] Query {i+1} executed successfully")
 
                                 tool_call_span.update(
                                     output={
@@ -1266,7 +1281,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
                             except Exception as query_error:
                                 mcp_errors += 1
-                                logger.error(f"❌ Query execution failed: {query_error}")
+                                logger.error(f"Query execution failed: {query_error}")
                                 tool_call_span.update(
                                     output={"error": str(query_error)},
                                     metadata={"status": "execution_error"}
@@ -1301,7 +1316,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 elif isinstance(result, dict):
                                     if "data" in result and isinstance(result["data"], dict):
                                         if "result" in result["data"] and isinstance(result["data"]["result"], list):
-                                            result_count = len(result["data"]["result"])
+                                            result_count = get_result_count(result)
                                         elif "resultType" in result["data"]:
                                             result_count = f"1 {result['data']['resultType']}"
                                     else:
@@ -1324,23 +1339,23 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                     }
                                 )
 
-                                logger.info(f"✅ Stored logs for {query_key}: {result_count} entries")
-                                logger.info(f"🔍 Result type: {type(result).__name__}")
+                                logger.info(f"[{get_timestamp()}] Stored logs for {query_key}: {result_count} entries")
+                                logger.info(f"[{get_timestamp()}] Result type: {type(result).__name__}")
                                 if isinstance(result, dict) and "data" in result:
-                                    logger.info(f"🔍 Data keys: {list(result['data'].keys()) if isinstance(result['data'], dict) else 'Not a dict'}")
+                                    logger.info(f"[{get_timestamp()}] Data keys: {list(result['data'].keys()) if isinstance(result['data'], dict) else 'Not a dict'}")
 
                             except Exception as store_error:
                                 result_span.update(
                                     output={"error": str(store_error)},
                                     metadata={"status": "storage_error"}
                                 )
-                                logger.error(f"❌ Failed to store query results: {store_error}")
+                                logger.error(f"Failed to store query results: {store_error}")
 
                     except Exception as query_error:
-                        logger.error(f"❌ Failed to execute query {i+1}: {query_error}")
-                        logger.error(f"❌ Query error type: {type(query_error).__name__}")
+                        logger.error(f"Failed to execute query {i+1}: {query_error}")
+                        logger.error(f"Query error type: {type(query_error).__name__}")
                         import traceback
-                        logger.error(f"❌ Query error stack trace: {traceback.format_exc()}")
+                        logger.error(f"Query error stack trace: {traceback.format_exc()}")
 
                 # **ENHANCED: Tool execution summary**
                 with langfuse.start_as_current_span(name="logs-fetching-summary") as summary_span:
@@ -1375,10 +1390,10 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"❌ Error fetching logs: {error_msg}")
-                logger.error(f"❌ Error type: {type(e).__name__}")
+                logger.error(f"Error fetching logs: {error_msg}")
+                logger.error(f"Error type: {type(e).__name__}")
                 import traceback
-                logger.error(f"❌ Log fetch stack trace: {traceback.format_exc()}")
+                logger.error(f"Log fetch stack trace: {traceback.format_exc()}")
                 state["error"] = error_msg
 
                 span.update(
@@ -1621,9 +1636,9 @@ Write your findings as a clear investigation report that includes:
                 try:
                     results = {"structured_correlation": state.get("structured_correlation")}
                     await self._store_analysis_in_database_new(state, results)
-                    logger.info("✅ Stored correlation analysis in database immediately")
+                    logger.info("Stored correlation analysis in database immediately")
                 except Exception as db_error:
-                    logger.error(f"❌ Failed to store correlation analysis in database: {db_error}")
+                    logger.error(f"Failed to store correlation analysis in database: {db_error}")
 
                 # Add JIRA comment immediately after correlation analysis completion
                 await self._add_jira_comment_for_analysis(
@@ -1642,7 +1657,7 @@ Write your findings as a clear investigation report that includes:
                     metadata={"status": "success", "workflow_position": 6}
                 )
 
-                logger.info(f"Log correlation analysis complete, saved to {correlation_file}")
+                logger.info(f"[{get_timestamp()}] Log correlation analysis complete, saved to {correlation_file}")
 
             except Exception as e:
                 error_msg = str(e)
@@ -1709,12 +1724,12 @@ Write your findings as a clear investigation report that includes:
                     RETURN s.name AS source, t.name AS dependency, t.namespace AS namespace
                     """
 
-                    logger.info(f"Executing Memgraph query for service: {service_name}")
-                    logger.info(f"Query: {query}")
+                    logger.info(f"[{get_timestamp()}] Executing Memgraph query for service: {service_name}")
+                    logger.info(f"[{get_timestamp()}] Query: {query}")
 
                     # Execute the query
                     result = execute_memgraph_query(query)
-                    logger.info(f"Memgraph query result: {result}")
+                    logger.info(f"[{get_timestamp()}] Memgraph query result: {result}")
 
                     # Parse the response format: [{'source': 'oemconnector', 'dependency': 'catalogue', 'namespace': 'paylater'}]
                     dependencies = []
@@ -1728,7 +1743,7 @@ Write your findings as a clear investigation report that includes:
                                     dependencies.append(dep)
                                 namespace = item.get('namespace', namespace)
 
-                        logger.info(f"Parsed dependencies for {service_name}: {dependencies}")
+                        logger.info(f"[{get_timestamp()}] Parsed dependencies for {service_name}: {dependencies}")
 
                         # Create the expected JSON response format
                         response_data = {
@@ -1903,7 +1918,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
                         # Add to existing queries
                         state["generated_promql_queries"].extend(new_queries)
-                        logger.info(f"Generated {len(new_queries)} PromQL queries")
+                        logger.info(f"[{get_timestamp()}] Generated {len(new_queries)} PromQL queries")
 
                     else:
                         raise ValueError("No valid JSON found in LLM response")
@@ -1955,7 +1970,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                     metadata={"status": "success", "workflow_position": 7}
                 )
 
-                logger.info(f"Total PromQL queries generated: {len(state['generated_promql_queries'])}")
+                logger.info(f"[{get_timestamp()}] Total PromQL queries generated: {len(state['generated_promql_queries'])}")
 
             except Exception as e:
                 error_msg = str(e)
@@ -1993,7 +2008,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                         output={"metrics_fetched": False, "reason": "no_mcp_client"},
                         metadata={"status": "skipped"}
                     )
-                    logger.warning("⚠️ No MCP client available, skipping metrics fetching")
+                    logger.warning("No MCP client available, skipping metrics fetching")
                     state["fetched_metrics"] = {}
                     state["current_step"] = "metrics_fetched"
                     state["metrics_need_more_fetching"] = False
@@ -2010,21 +2025,21 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                         output={"metrics_fetched": False, "reason": "no_prometheus_tool"},
                         metadata={"status": "skipped"}
                     )
-                    logger.warning("⚠️ No query_prometheus tool available, continuing without metrics")
+                    logger.warning("No query_prometheus tool available, continuing without metrics")
                     state["fetched_metrics"] = {}
                     state["current_step"] = "metrics_fetched"
                     state["metrics_need_more_fetching"] = False
                     return state
 
-                logger.info("🔧 Found query_prometheus tool, proceeding with metrics queries")
+                logger.info("Found query_prometheus tool, proceeding with metrics queries")
                 queries_to_execute = state.get("generated_promql_queries", [])
 
                 # Limit to maximum 6 queries to avoid overwhelming the system
                 if len(queries_to_execute) > 9:
                     queries_to_execute = queries_to_execute[:9]
-                    logger.info(f"Limited PromQL queries from {len(state.get('generated_promql_queries', []))} to 9 for performance")
+                    logger.info(f"[{get_timestamp()}] Limited PromQL queries from {len(state.get('generated_promql_queries', []))} to 9 for performance")
 
-                logger.info(f"🔧 Executing {len(queries_to_execute)} PromQL queries")
+                logger.info(f"[{get_timestamp()}] Executing {len(queries_to_execute)} PromQL queries")
 
                 # Initialize tracking variables for tool call tracing
                 mcp_calls = 0
@@ -2036,10 +2051,10 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                 for i, query_config in enumerate(queries_to_execute):
                     try:
                         if not isinstance(query_config, dict):
-                            logger.error(f"❌ PromQL query config {i+1} is not a dict: {type(query_config)}")
+                            logger.error(f"PromQL query config {i+1} is not a dict: {type(query_config)}")
                             continue
 
-                        logger.info(f"🔧 Executing PromQL query {i+1}: {query_config.get('expr', query_config.get('query', 'No query'))}")
+                        logger.info(f"[{get_timestamp()}] Executing PromQL query {i+1}: {query_config.get('expr', query_config.get('query', 'No query'))}")
 
                         # **ENHANCED: Track individual tool call with Langfuse**
                         with langfuse.start_as_current_span(
@@ -2062,7 +2077,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                     "stepSeconds": step_seconds,
                                     "datasourceUid": str(query_config.get("datasourceUid", "NxyYHrE4k"))
                                 }
-                                logger.info(f"🔧 PromQL params: {prometheus_params}")
+                                logger.info(f"[{get_timestamp()}] PromQL params: {prometheus_params}")
 
                                 tool_info = {
                                     "tool_name": "query_prometheus",
@@ -2088,7 +2103,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 )
 
                             except Exception as param_error:
-                                logger.error(f"❌ Failed to build PromQL params: {param_error}")
+                                logger.error(f"Failed to build PromQL params: {param_error}")
                                 tool_call_span.update(
                                     output={"error": str(param_error)},
                                     metadata={"status": "parameter_error"}
@@ -2099,9 +2114,9 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                             try:
                                 result = await self.mcp_client.call_tool_direct("query_prometheus", prometheus_params)
                                 successful_queries += 1
-                                logger.info(f" PromQL query {i+1} executed successfully")
-                                logger.info(f" Result is  {result}")
-                                logger.info(f" Result is  {type(result)}")
+                                logger.info(f"[{get_timestamp()}]  PromQL query {i+1} executed successfully")
+                                logger.info(f"[{get_timestamp()}]  Result is  {result}")
+                                logger.info(f"[{get_timestamp()}]  Result is  {type(result)}")
 
 
                                 tool_call_span.update(
@@ -2114,7 +2129,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
                             except Exception as query_error:
                                 mcp_errors += 1
-                                logger.error(f"❌ PromQL query execution failed: {query_error}")
+                                logger.error(f"PromQL query execution failed: {query_error}")
                                 tool_call_span.update(
                                     output={"error": str(query_error)},
                                     metadata={"status": "execution_error"}
@@ -2130,9 +2145,9 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 try:
                                     import json
                                     result = json.loads(result)
-                                    logger.info(f"🔧 Parsed JSON string result for query {i+1}")
+                                    logger.info(f"[{get_timestamp()}] Parsed JSON string result for query {i+1}")
                                 except (json.JSONDecodeError, ValueError) as parse_error:
-                                    logger.warning(f"⚠️ Could not parse result as JSON: {parse_error}")
+                                    logger.warning(f"Could not parse result as JSON: {parse_error}")
 
                             # Store results with consistent key format matching filter function
                             try:
@@ -2148,7 +2163,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 if isinstance(result, dict):
                                     if "data" in result and isinstance(result["data"], dict):
                                         if "result" in result["data"] and isinstance(result["data"]["result"], list):
-                                            has_results = len(result["data"]["result"]) > 0
+                                            has_results = is_successful_promql_result(result)
                                 elif isinstance(result, list):
                                     # Handle direct list results from JSON parsing
                                     has_results = len(result) > 0
@@ -2170,7 +2185,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                     elif isinstance(result, dict):
                                         if "data" in result and isinstance(result["data"], dict):
                                             if "result" in result["data"] and isinstance(result["data"]["result"], list):
-                                                result_count = len(result["data"]["result"])
+                                                result_count = get_result_count(result)
                                             elif "resultType" in result["data"]:
                                                 result_count = f"1 {result['data']['resultType']}"
                                         else:
@@ -2194,19 +2209,19 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                         }
                                     )
 
-                                    logger.info(f"✅ Stored metrics for {query_key}: {result_count} entries (status: {'success' if has_results else 'empty'})")
-                                    logger.info(f"🔍 Result type: {type(result).__name__}")
+                                    logger.info(f"[{get_timestamp()}] Stored metrics for {query_key}: {result_count} entries (status: {'success' if has_results else 'empty'})")
+                                    logger.info(f"[{get_timestamp()}] Result type: {type(result).__name__}")
                                     if isinstance(result, dict) and "data" in result:
-                                        logger.info(f"🔍 Data keys: {list(result['data'].keys()) if isinstance(result['data'], dict) else 'Not a dict'}")
+                                        logger.info(f"[{get_timestamp()}] Data keys: {list(result['data'].keys()) if isinstance(result['data'], dict) else 'Not a dict'}")
 
                             except Exception as store_error:
                                 result_span.update(
                                     output={"error": str(store_error)},
                                     metadata={"status": "storage_error"}
                                 )
-                                logger.error(f"❌ Failed to store PromQL results: {store_error}")
+                                logger.error(f"Failed to store PromQL results: {store_error}")
                                 import traceback
-                                logger.error(f"❌ PromQL store error stack trace: {traceback.format_exc()}")
+                                logger.error(f"PromQL store error stack trace: {traceback.format_exc()}")
 
                                 # Store failed query
                                 query_key = f"query_{i+1}"
@@ -2218,8 +2233,8 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                                 }
 
                     except Exception as query_error:
-                        logger.error(f"❌ Failed to execute PromQL query {i+1}: {query_error}")
-                        logger.error(f"❌ PromQL query error type: {type(query_error).__name__}")
+                        logger.error(f"Failed to execute PromQL query {i+1}: {query_error}")
+                        logger.error(f"PromQL query error type: {type(query_error).__name__}")
 
                 # **ENHANCED: Tool execution summary**
                 with langfuse.start_as_current_span(name="metrics-fetching-summary") as summary_span:
@@ -2302,7 +2317,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
 
                 # If we have any meaningful metrics, we have enough data
                 if total_metric_entries > 0:
-                    logger.info(f"✅ Found {total_metric_entries} metric entries across {len(fetched_metrics)} queries - sufficient data")
+                    logger.info(f"[{get_timestamp()}] Found {total_metric_entries} metric entries across {len(fetched_metrics)} queries - sufficient data")
                     span.update(
                         output={"decision": False, "reason": "sufficient_data", "total_entries": total_metric_entries},
                         metadata={"status": "sufficient"}
@@ -2310,7 +2325,7 @@ Do NOT generate queries for any services not in this list. Only use these exact 
                     return False
 
                 # Conservative approach: Don't fetch more to avoid query loops
-                logger.info("🔍 No meaningful metrics found, but stopping to avoid query loops")
+                logger.info("No meaningful metrics found, but stopping to avoid query loops")
                 span.update(
                     output={"decision": False, "reason": "avoid_loops"},
                     metadata={"status": "conservative"}
@@ -2478,7 +2493,7 @@ Write a clear performance analysis report that helps the team understand what ha
                             "structured_metrics": state.get("structured_metrics", {})
                         }
                         await self._store_analysis_in_database_new(state, results)
-                        logger.info("✅ Stored metrics analysis in database immediately")
+                        logger.info("Stored metrics analysis in database immediately")
 
                         db_span.update(
                             output={"database_storage_successful": True},
@@ -2486,7 +2501,7 @@ Write a clear performance analysis report that helps the team understand what ha
                         )
 
                 except Exception as db_error:
-                    logger.error(f"❌ Failed to store metrics analysis in database: {db_error}")
+                    logger.error(f"Failed to store metrics analysis in database: {db_error}")
 
                 # Add JIRA comment immediately after metrics analysis completion with tracing
                 with langfuse.start_as_current_span(name="add-jira-comment-metrics") as jira_span:
@@ -2513,7 +2528,7 @@ Write a clear performance analysis report that helps the team understand what ha
                     metadata={"status": "success", "workflow_position": 9}
                 )
 
-                logger.info(f"Metrics correlation analysis complete, saved to {metrics_file}")
+                logger.info(f"[{get_timestamp()}] Metrics correlation analysis complete, saved to {metrics_file}")
 
             except Exception as e:
                 error_msg = str(e)
@@ -2632,7 +2647,7 @@ Write a clear performance analysis report that helps the team understand what ha
                         metadata={"llm_task": "correlation_summary"}
                     )
 
-                logger.info(f"Generated correlation summary, length: {len(correlation_summary)} characters")
+                logger.info(f"[{get_timestamp()}] Generated correlation summary, length: {len(correlation_summary)} characters")
                 state["correlation_summary"] = correlation_summary
 
                 # Filter PromQL queries - only keep successful ones correlated to alert with tracing
@@ -2775,7 +2790,7 @@ Write a clear performance analysis report that helps the team understand what ha
                         HumanMessage(content=filter_prompt)
                     ]
 
-                logger.info(f"PromQL filtering prompt: {filter_prompt}")
+                logger.info(f"[{get_timestamp()}] PromQL filtering prompt: {filter_prompt}")
                 response = await self.llm.ainvoke(messages, config={
                         "callbacks": [self.langfuse_handler],
                         "metadata": {
@@ -2783,17 +2798,17 @@ Write a clear performance analysis report that helps the team understand what ha
                             "langfuse_tags": ["correlation_agent"]
                         }
                     })
-                logger.info(f"LLM response for query filtering: {response.content}")
+                logger.info(f"[{get_timestamp()}] LLM response for query filtering: {response.content}")
 
                 try:
                     relevant_indices = json.loads(response.content.strip())
                     if not isinstance(relevant_indices, list):
                         raise ValueError("Response is not a list")
-                    logger.info(f"Parsed relevant indices: {relevant_indices}")
+                    logger.info(f"[{get_timestamp()}] Parsed relevant indices: {relevant_indices}")
                 except (json.JSONDecodeError, ValueError) as e:
                     logger.warning(f"Could not parse LLM response for query filtering: {e}. Using all successful queries.")
                     relevant_indices = [q["query_index"] for q in successful_queries]
-                    logger.info(f"Fallback relevant indices: {relevant_indices}")
+                    logger.info(f"[{get_timestamp()}] Fallback relevant indices: {relevant_indices}")
 
                 # Build filtered queries in the required format
                 filtered_queries = []
@@ -2830,7 +2845,7 @@ Write a clear performance analysis report that helps the team understand what ha
                             metadata={"status": "success"}
                         )
 
-                        logger.info(f"Filtered {len(filtered_queries)} relevant PromQL queries from {len(successful_queries)} successful queries")
+                        logger.info(f"[{get_timestamp()}] Filtered {len(filtered_queries)} relevant PromQL queries from {len(successful_queries)} successful queries")
 
             except Exception as e:
                 logger.error(f"Error filtering PromQL queries: {e}")
@@ -2922,7 +2937,7 @@ Write a clear performance analysis report that helps the team understand what ha
                             session.commit()
 
                             storage_success = True
-                            logger.info(f"✅ PostgreSQL storage succeeded on attempt {attempt}")
+                            logger.info(f"[{get_timestamp()}] PostgreSQL storage succeeded on attempt {attempt}")
                             db_span.update(
                                 output={
                                     "summary_stored": summary_stored,
@@ -2944,18 +2959,18 @@ Write a clear performance analysis report that helps the team understand what ha
                             metadata={"status": "success"}
                         )
 
-                        logger.info(f"Successfully stored correlation summary and feedback for incident {incident_id}")
+                        logger.info(f"[{get_timestamp()}] Successfully stored correlation summary and feedback for incident {incident_id}")
                         break
 
                     except Exception as e:
                         logger.warning(f"PostgreSQL storage attempt {attempt} failed: {e}")
                         session.rollback()
                         if attempt < max_retries:
-                            logger.info(f"Retrying PostgreSQL storage in {retry_delay}s...")
+                            logger.info(f"[{get_timestamp()}] Retrying PostgreSQL storage in {retry_delay}s...")
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2  # Exponential backoff
                         else:
-                            logger.error(f"❌ All {max_retries} PostgreSQL storage attempts failed")
+                            logger.error(f"All {max_retries} PostgreSQL storage attempts failed")
                             span.update(
                                 output={"error": str(e), "attempts": attempt},
                                 metadata={"status": "error"}
@@ -3082,7 +3097,7 @@ Write a clear performance analysis report that helps the team understand what ha
         """STEP 11: Jira update step - now handled individually after each analysis with comprehensive tracing."""
         with langfuse.start_as_current_span(name="update-jira") as span:
             span.update(session_id=str(uuid.uuid4().hex))
-            logger.info("📝 STEP 11: Jira comments already added individually after each analysis")
+            logger.info("STEP 11: Jira comments already added individually after each analysis")
 
             try:
                 span.update(
@@ -3140,7 +3155,7 @@ Write a clear performance analysis report that helps the team understand what ha
                     )
 
                 if not jira_ticket_id:
-                    logger.warning(f"⚠️ No Jira ticket ID found for {analysis_type} analysis comment")
+                    logger.warning(f"No Jira ticket ID found for {analysis_type} analysis comment")
                     span.update(
                         output={"comment_added": False, "reason": "no_jira_ticket_id"},
                         metadata={"status": "skipped"}
@@ -3150,7 +3165,7 @@ Write a clear performance analysis report that helps the team understand what ha
                 # Check if MCP client and Jira tools are available with tracing
                 with langfuse.start_as_current_span(name="validate-jira-tools") as validate_span:
                     if not self.mcp_client:
-                        logger.warning("⚠️ No MCP client available, skipping Jira comment")
+                        logger.warning("No MCP client available, skipping Jira comment")
                         validate_span.update(
                             output={"mcp_client_available": False},
                             metadata={"status": "skipped"}
@@ -3176,7 +3191,7 @@ Write a clear performance analysis report that helps the team understand what ha
                     )
 
                     if not has_jira_tool:
-                        logger.warning("⚠️ jira_add_comment tool not available, skipping Jira comment")
+                        logger.warning("jira_add_comment tool not available, skipping Jira comment")
                         span.update(
                             output={"comment_added": False, "reason": "jira_tool_not_available"},
                             metadata={"status": "skipped"}
@@ -3212,7 +3227,7 @@ Write a clear performance analysis report that helps the team understand what ha
                 # Get JIRA formatter prompt from Langfuse with tracing
                 with langfuse.start_as_current_span(name="get-jira-formatter-prompt") as prompt_span:
                     jira_formatter_prompt = get_correlation_prompt("jira-formatter", jira_variables)
-                    logger.info(f"Retrieved JIRA formatter prompt from Langfuse for {analysis_type} analysis")
+                    logger.info(f"[{get_timestamp()}] Retrieved JIRA formatter prompt from Langfuse for {analysis_type} analysis")
 
                     prompt_span.update(
                         input={"prompt_type": "jira-formatter", "variables": list(jira_variables.keys())},
@@ -3273,7 +3288,7 @@ Write a clear performance analysis report that helps the team understand what ha
                     "comment": sanitized_comment
                 }
 
-                logger.info(f"🎫 Adding {analysis_type} comment to Jira ticket: {jira_ticket_id}")
+                logger.info(f"[{get_timestamp()}] 🎫 Adding {analysis_type} comment to Jira ticket: {jira_ticket_id}")
 
                 # Add retry logic for Jira comment failures (like main agents) with detailed tracing
                 max_retries = 3
@@ -3298,11 +3313,11 @@ Write a clear performance analysis report that helps the team understand what ha
                                     metadata={"tool_type": "mcp_jira_comment", "agent_type": "correlation_agent"}
                                 )
 
-                                logger.info(f"✅ Successfully added {analysis_type} analysis comment to Jira ticket (attempt {retry_count + 1})")
+                                logger.info(f"[{get_timestamp()}] Successfully added {analysis_type} analysis comment to Jira ticket (attempt {retry_count + 1})")
 
                         except Exception as retry_error:
                             retry_count += 1
-                            logger.warning(f"⚠️ Attempt {retry_count} failed for {analysis_type} Jira comment: {retry_error}")
+                            logger.warning(f"Attempt {retry_count} failed for {analysis_type} Jira comment: {retry_error}")
 
                             with langfuse.start_as_current_span(name=f"[tool-result]-jira_add_comment-failed-attempt-{retry_count}") as failed_span:
                                 failed_span.update(
@@ -3314,7 +3329,7 @@ Write a clear performance analysis report that helps the team understand what ha
                             if retry_count < max_retries:
                                 await asyncio.sleep(2 ** retry_count)  # Exponential backoff
                             else:
-                                logger.error(f"❌ All {max_retries} attempts failed for {analysis_type} Jira comment")
+                                logger.error(f"All {max_retries} attempts failed for {analysis_type} Jira comment")
                                 raise retry_error
 
                     retry_span.update(
@@ -3339,7 +3354,7 @@ Write a clear performance analysis report that helps the team understand what ha
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"❌ Failed to add {analysis_type} Jira comment: {error_msg}")
+                logger.error(f"Failed to add {analysis_type} Jira comment: {error_msg}")
 
                 span.update(
                     output={"error": error_msg, "comment_added": False},
@@ -3500,11 +3515,11 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
 
                 # Log final status with tracing
                 with langfuse.start_as_current_span(name="log-final-status") as log_span:
-                    logger.info(f"Correlation workflow completed for incident: {state['incident_key']}")
-                    logger.info(f"Log correlation: {'✅' if state.get('log_correlation_result') else '❌'}")
-                    logger.info(f"Metrics correlation: {'✅' if state.get('metrics_correlation_result') else '❌'}")
-                    logger.info(f"Redis storage: {'✅' if state.get('redis_stored') else '❌'}")
-                    logger.info(f"PostgreSQL storage: {'✅' if state.get('postgres_stored') else '❌'}")
+                    logger.info(f"[{get_timestamp()}] Correlation workflow completed for incident: {state['incident_key']}")
+                    logger.info(f"[{get_timestamp()}] Log correlation: {'' if state.get('log_correlation_result') else ''}")
+                    logger.info(f"[{get_timestamp()}] Metrics correlation: {'' if state.get('metrics_correlation_result') else ''}")
+                    logger.info(f"[{get_timestamp()}] Redis storage: {'' if state.get('redis_stored') else ''}")
+                    logger.info(f"[{get_timestamp()}] PostgreSQL storage: {'' if state.get('postgres_stored') else ''}")
 
                     log_span.update(
                         output={
@@ -3597,7 +3612,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                     )
                     return
 
-                logger.info(f"Storing structured correlation results for incident ID {incident_id}")
+                logger.info(f"[{get_timestamp()}] Storing structured correlation results for incident ID {incident_id}")
 
                 span.update(
                     input={
@@ -3637,7 +3652,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                                     text("UPDATE incidents SET dependencies = :data WHERE id = :id"),
                                     {"data": deps_json, "id": incident_id}
                                 )
-                                logger.info(f"Updated dependencies with {len(service_deps)} services")
+                                logger.info(f"[{get_timestamp()}] Updated dependencies with {len(service_deps)} services")
                                 operations_completed.append("dependencies")
 
                             # Update alert_metadata field with tracing
@@ -3685,7 +3700,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                             session.commit()
 
                             transaction_success = True
-                            logger.info(f"✅ PostgreSQL transaction succeeded on attempt {attempt}")
+                            logger.info(f"[{get_timestamp()}] PostgreSQL transaction succeeded on attempt {attempt}")
                             db_span.update(
                                 output={
                                     "operations_completed": operations_completed,
@@ -3696,7 +3711,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                                 metadata={"status": "success"}
                             )
 
-                            logger.info(f"✅ Successfully updated incident {incident_id} in database with structured data")
+                            logger.info(f"[{get_timestamp()}] Successfully updated incident {incident_id} in database with structured data")
 
                         span.update(
                             output={
@@ -3713,11 +3728,11 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                         logger.warning(f"PostgreSQL transaction attempt {attempt} failed: {db_error}")
                         session.rollback()
                         if attempt < max_retries:
-                            logger.info(f"Retrying PostgreSQL transaction in {retry_delay}s...")
+                            logger.info(f"[{get_timestamp()}] Retrying PostgreSQL transaction in {retry_delay}s...")
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2  # Exponential backoff
                         else:
-                            logger.error(f"❌ All {max_retries} PostgreSQL transaction attempts failed")
+                            logger.error(f"All {max_retries} PostgreSQL transaction attempts failed")
                             span.update(
                                 output={"error": str(db_error), "transaction_rolled_back": True, "attempts": attempt},
                                 metadata={"status": "error"}
@@ -3729,7 +3744,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"❌ Error storing analysis in database: {error_msg}")
+                logger.error(f"Error storing analysis in database: {error_msg}")
 
                 span.update(
                     output={"error": error_msg},
@@ -3768,7 +3783,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                                 {"data": data_json, "id": incident_id}
                             )
                             log_count = len(structured_data.get('correlated_logs', [])) if isinstance(structured_data, dict) else 0
-                            logger.info(f"Successfully updated correlation field in database for incident {incident_id} with {log_count} structured logs")
+                            logger.info(f"[{get_timestamp()}] Successfully updated correlation field in database for incident {incident_id} with {log_count} structured logs")
 
                             corr_span.update(
                                 output={"correlation_stored": True, "log_count": log_count},
@@ -3783,7 +3798,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                             text("UPDATE incidents SET metric_insights = :data WHERE id = :id"),
                             {"data": metrics_text, "id": incident_id}
                         )
-                        logger.info(f"Successfully updated metrics field in database for incident {incident_id}")
+                        logger.info(f"[{get_timestamp()}] Successfully updated metrics field in database for incident {incident_id}")
 
                         metrics_span.update(
                             output={"metrics_stored": True, "text_length": len(metrics_text)},
@@ -3799,7 +3814,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                                 text("UPDATE incidents SET correlation_summary = :data WHERE id = :id"),
                                 {"data": summary_text, "id": incident_id}
                             )
-                            logger.info(f"Successfully updated correlation_summary field in database for incident {incident_id}")
+                            logger.info(f"[{get_timestamp()}] Successfully updated correlation_summary field in database for incident {incident_id}")
 
                             summary_span.update(
                                 output={"summary_stored": True, "summary_length": len(summary_text)},
@@ -3815,7 +3830,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                                 text("UPDATE incidents SET correlation_metrics_promql = :data WHERE id = :id"),
                                 {"data": queries_json, "id": incident_id}
                             )
-                            logger.info(f"Successfully updated correlation_metrics_promql field in database for incident {incident_id}")
+                            logger.info(f"[{get_timestamp()}] Successfully updated correlation_metrics_promql field in database for incident {incident_id}")
 
                             promql_span.update(
                                 output={
@@ -3887,7 +3902,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                     metadata={"status": "success"}
                 )
 
-                logger.info(f"Created fallback correlation structure with message length: {len(truncated_message)}")
+                logger.info(f"[{get_timestamp()}] Created fallback correlation structure with message length: {len(truncated_message)}")
                 return fallback_correlation
 
             except Exception as e:
@@ -3936,7 +3951,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                     metadata={"status": "success"}
                 )
 
-                logger.info(f"Extracted metric decision: {decision} using method: {extraction_method}")
+                logger.info(f"[{get_timestamp()}] Extracted metric decision: {decision} using method: {extraction_method}")
                 return decision
 
             except Exception as e:
@@ -4049,7 +4064,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                 )
 
                 if parsed_data:
-                    logger.info(f"Successfully retrieved incident {incident_key} using method: {retrieval_method}")
+                    logger.info(f"[{get_timestamp()}] Successfully retrieved incident {incident_key} using method: {retrieval_method}")
                 else:
                     logger.warning(f"Incident {incident_key} not found in Redis after {len(attempts_made)} attempts")
 
@@ -4177,7 +4192,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                         metadata={"status": "success"}
                     )
 
-                    logger.info(f"Updated incident {incident_key} in Redis with results in folder structure")
+                    logger.info(f"[{get_timestamp()}] Updated incident {incident_key} in Redis with results in folder structure")
                 else:
                     logger.warning(f"Incident {incident_key} not found in Redis")
                     span.update(
@@ -4200,7 +4215,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
             trace_context=langfuse_trace_context
         ) as span:
             span.update_trace(session_id=langfuse_trace_context.get("session_id"))
-            logger.info(f"Starting incident analysis with LangGraph workflow for key: {incident_key}")
+            logger.info(f"[{get_timestamp()}] Starting incident analysis with LangGraph workflow for key: {incident_key}")
 
             global current_trace_id
             current_trace_id=langfuse_trace_context.get("trace_id")
@@ -4246,15 +4261,15 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                     logger.info("🏗️ Creating initial state for LangGraph workflow")
 
                     # Validate incident_data to avoid unhashable type errors
-                    logger.info(f"📊 Incident data type: {type(incident_data)}")
+                    logger.info(f"[{get_timestamp()}] Incident data type: {type(incident_data)}")
                     if not isinstance(incident_data, dict):
-                        logger.error(f"❌ Incident data is not a dict: {type(incident_data)}")
+                        logger.error(f"Incident data is not a dict: {type(incident_data)}")
                         raise ValueError(f"Expected incident_data to be dict, got {type(incident_data)}")
 
                     # Create safe copies of any dict values to prevent unhashable type errors
                     safe_incident_data = dict(incident_data) if incident_data else {}
 
-                    logger.info("🔧 Building initial state dictionary...")
+                    logger.info("Building initial state dictionary...")
                     try:
                         initial_state: CorrelationAgentState = {
                             "alert_payload": safe_incident_data,
@@ -4330,13 +4345,13 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                             metadata={"status": "success"}
                         )
 
-                        logger.info("✅ Initial state created successfully")
+                        logger.info("Initial state created successfully")
 
                     except Exception as state_error:
-                        logger.error(f"❌ Error creating initial state: {state_error}")
-                        logger.error(f"❌ State error type: {type(state_error).__name__}")
+                        logger.error(f"Error creating initial state: {state_error}")
+                        logger.error(f"State error type: {type(state_error).__name__}")
                         import traceback
-                        logger.error(f"❌ State creation stack trace: {traceback.format_exc()}")
+                        logger.error(f"State creation stack trace: {traceback.format_exc()}")
 
                         state_span.update(
                             output={"error": str(state_error)},
@@ -4346,9 +4361,9 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
 
                 # Execute LangGraph workflow with tracing
                 with langfuse.start_as_current_span(name="execute-langgraph-workflow") as workflow_span:
-                    logger.info("🚀 Executing LangGraph correlation workflow")
-                    logger.info(f"📊 Initial state keys: {list(initial_state.keys())}")
-                    logger.info(f"📊 Initial state types: {[(k, type(v).__name__) for k, v in initial_state.items()]}")
+                    logger.info("Executing LangGraph correlation workflow")
+                    logger.info(f"[{get_timestamp()}] Initial state keys: {list(initial_state.keys())}")
+                    logger.info(f"[{get_timestamp()}] Initial state types: {[(k, type(v).__name__) for k, v in initial_state.items()]}")
 
                     result = await self.graph.ainvoke(initial_state, config={
                         "callbacks": [self.langfuse_handler],
@@ -4368,8 +4383,8 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                         metadata={"status": "success"}
                     )
 
-                    logger.info("✅ LangGraph workflow execution completed")
-                    logger.info(f"📊 Result keys: {list(result.keys()) if isinstance(result, dict) else f'Result type: {type(result).__name__}'}")
+                    logger.info("LangGraph workflow execution completed")
+                    logger.info(f"[{get_timestamp()}] Result keys: {list(result.keys()) if isinstance(result, dict) else f'Result type: {type(result).__name__}'}")
 
                 # Prepare final results with tracing
                 with langfuse.start_as_current_span(name="prepare-final-results") as final_span:
@@ -4414,8 +4429,8 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                     metadata={"status": "success"}
                 )
 
-                logger.info(f"LangGraph workflow completed for incident: {incident_key}")
-                logger.info(f"Final status: {result.get('current_step', 'unknown')}")
+                logger.info(f"[{get_timestamp()}] LangGraph workflow completed for incident: {incident_key}")
+                logger.info(f"[{get_timestamp()}] Final status: {result.get('current_step', 'unknown')}")
                 return final_results
 
             except Exception as e:
@@ -4454,7 +4469,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
         """STEP 12: Call RCA Agent for Root Cause Analysis with comprehensive tracing."""
         with langfuse.start_as_current_span(name="rca-analysis-delegation") as span:
             span.update(session_id=str(uuid.uuid4().hex))
-            logger.info("🔍 STEP 12: Calling RCA agent for analysis")
+            logger.info("STEP 12: Calling RCA agent for analysis")
 
             try:
                 span.update(
@@ -4560,7 +4575,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
 
                 # Handle RCA response with tracing
                 with langfuse.start_as_current_span(name="[tool-result]-send_to_rca_agent") as result_span:
-                    logger.info(f"✅ RCA agent request sent: {rca_status}")
+                    logger.info(f"[{get_timestamp()}] RCA agent request sent: {rca_status}")
                     state["rca_analysis"] = f"RCA analysis request sent to RCA agent. Status: {rca_status}"
                     state["current_step"] = "rca_delegated"
 
@@ -4669,7 +4684,7 @@ _Generated by Correlation Agent at {datetime.now().strftime("%Y-%m-%d %H:%M:%S U
                     metadata={"status": "success"}
                 )
 
-                logger.info(f"CorrelationAgent cleanup completed: {cleanup_operations}")
+                logger.info(f"[{get_timestamp()}] CorrelationAgent cleanup completed: {cleanup_operations}")
 
             except Exception as e:
                 span.update(

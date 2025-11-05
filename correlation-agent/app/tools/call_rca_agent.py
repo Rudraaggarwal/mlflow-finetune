@@ -106,11 +106,11 @@ async def send_to_rca_agent(
             )
 
             if response.status_code == 200:
-                logger.info(f"✅ RCA agent accepted incident {incident_id} successfully")
+                logger.info(f"RCA agent accepted incident {incident_id} successfully")
                 return f"Incident {incident_id} sent to RCA agent successfully"
 
             elif response.status_code == 202:
-                logger.info(f"✅ RCA agent accepted incident {incident_id} for background processing")
+                logger.info(f"RCA agent accepted incident {incident_id} for background processing")
                 return f"Incident {incident_id} queued for RCA analysis"
 
             else:
