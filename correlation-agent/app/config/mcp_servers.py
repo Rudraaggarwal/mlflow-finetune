@@ -70,8 +70,28 @@ def get_mcp_config() -> Dict[str, Dict[str, Any]]:
         }
         logger.info(f"Added Postgres MCP server to configuration: {postgres_url}")
 
+    # Check for MSSQL MCP server configuration
+    mssql_url = os.getenv("MSSQL_MCP_SERVER")
+
+    if mssql_url:
+        config["mssql-mcp"] = {
+            'url': mssql_url,
+            'transport': 'sse'
+        }
+        logger.info(f"Added MSSQL MCP server to configuration: {mssql_url}")
+
+    # Check for SolarWinds MCP server configuration
+    solarwinds_url = os.getenv("SOLARWINDS_MCP_SERVER")
+
+    if solarwinds_url:
+        config["solarwinds-mcp"] = {
+            'url': solarwinds_url,
+            'transport': 'sse'
+        }
+        logger.info(f"Added SolarWinds MCP server to configuration: {solarwinds_url}")
+
     if not config:
-        logger.warning("No MCP servers configured. Please set environment variables like GRAFANA_MCP_SERVER, JIRA_MCP_SERVER, POSTGRES_MCP_SERVER")
+        logger.warning("No MCP servers configured. Please set environment variables like GRAFANA_MCP_SERVER, JIRA_MCP_SERVER, POSTGRES_MCP_SERVER, MSSQL_MCP_SERVER, SOLARWINDS_MCP_SERVER")
     else:
         logger.info(f"MCP configuration created with {len(config)} servers: {list(config.keys())}")
 

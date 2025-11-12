@@ -1,0 +1,77 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:12:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+## What the Logs Show
+
+### Thread [152492] Analysis:
+
+The logs reveal a series of failures in the PaymentController service for client ID 2796506 at the exact time of the reported incident (2025-11-10 15:12:37).
+
+#### Timeline for Thread 152492:
+1. **15:12:32.317** - A fatal memory error occurred in the ClientInfo::GetClientDetails function
+   ```
+   FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]
+   ```
+
+2. **15:12:32.364** - Multiple MST (Master System Table) detail lookup failures:
+   ```
+   MST details not found or fetch failed for Type [1], ID [2015]
+   MST details not found or fetch failed for Type [2], ID [0]
+   MST details not found or fetch failed for Type [3], ID [2796506]
+   ```
+
+3. **15:12:32.458** - Transaction failure with error message:
+   ```
+   MST details not found or fetch failed for Type [3], ID [2796506]
+   PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+   ```
+
+4. **15:12:32.474 to 15:12:37.215** - Repeated failures of the QSparc Offline Parameter Download:
+   ```
+   QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+   ```
+
+#### Errors in Thread 152492:
+- Fatal memory allocation error (buffer size mismatch)
+- Multiple MST lookup failures
+- QSparc Offline Parameter Download failures
+- Transaction redemption rejection
+
+#### Impact of Thread 152492:
+This thread shows the core failure that led to the OEM service outage. The memory allocation error triggered a cascade of failures in the system's ability to retrieve client data, which then prevented proper transaction processing.
+
+### Thread [158360]:
+No logs were found for this thread ID in the provided data.
+
+## Investigation Summary
+
+The PaymentController service experienced a critical failure at 15:12:37 on November 10, 2025, affecting client ID 2796506. The issue appears to have started with a memory allocation error in the ClientInfo::GetClientDetails function, where the system attempted to copy 11 bytes of data into a 3-byte buffer.
+
+This memory error caused a cascade of failures:
+
+1. The system could not retrieve necessary MST (Master System Table) details for multiple entity types, including the client's information.
+
+2. Without proper client data, the system rejected the transaction with "REDEMPTION NOT ALLOWED" and set the transaction to a failed state.
+
+3. The QSparc Offline Parameter Download functionality repeatedly failed, indicating that the payment terminal could not receive necessary configuration data.
+
+4. The client database shows multiple "PRODUCT VALIDATION CALL FAILED" errors for the same client starting at 15:08:44 and continuing through the incident time, suggesting this was an ongoing issue for several minutes.
+
+The root cause appears to be a memory allocation issue in the client information retrieval process, which prevented the system from properly identifying and validating the client. This memory error is particularly concerning as it could potentially lead to memory corruption or security vulnerabilities if not addressed.
+
+The repeated failures in the database logs suggest the client system was attempting to retry the operation multiple times, but each attempt failed due to the underlying memory allocation issue in the PaymentController service.
+
+### Thread 152492 Summary:
+This thread shows a critical memory allocation error that prevented proper client data retrieval, causing transaction processing to fail and the QSparc Offline Parameter Download functionality to break. The memory size mismatch (attempting to copy 11 bytes into a 3-byte buffer) is likely the root cause of the OEM service outage.
+================================================================================

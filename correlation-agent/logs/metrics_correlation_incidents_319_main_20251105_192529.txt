@@ -1,0 +1,90 @@
+================================================================================
+METRICS CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: EMI Paylater Catalogue Service Down
+Service: paylater
+Timestamp: 2025-11-05T11:38:50Z
+================================================================================
+FETCHED METRICS SUMMARY:
+- query_1: alert_causing
+- query_2: deployment_status
+- query_3: deployment_desired
+- query_4: pod_status
+- query_5: container_restarts
+- query_6: container_ready
+- query_7: memory_usage
+- query_8: memory_limits
+- query_9: cpu_limits
+================================================================================
+# Performance Analysis Report: EMI Paylater Catalogue Service Issue
+
+## Primary Issue
+**Contradiction Between Alert and System Metrics**
+
+Our investigation reveals a significant discrepancy between the reported alert "EMI Paylater Catalogue Service Down" and the actual system metrics. The performance data shows that the catalogueserv deployment is actually running properly with:
+
+- 1 replica available consistently throughout the monitoring period
+- All pods in "Running" state with no restarts
+- Container readiness status at 100% (value "1")
+
+This contradicts the initial investigation finding of "NO LOGS FOUND" and suggests the service is operational from a Kubernetes perspective.
+
+## Related Performance Issues
+
+### 1. Memory Utilization
+- Current memory usage: 876,384,256 bytes (~835 MB)
+- Memory limit: 3,221,225,472 bytes (3 GB)
+- Utilization: ~27% of allocated memory
+
+The service is using less than one-third of its allocated memory, indicating no memory pressure issues.
+
+### 2. Pod Deployment Status
+- Multiple catalogueserv variants are running simultaneously:
+  - catalogueserv-8c45dcbd9-8znwf
+  - catalogueserv-v2-85fd7b6845-kgxlt
+  - catalogueserv-v2-es-6fb546d5f4-pk87g
+
+All three variants show healthy status metrics with no failed states or restarts, suggesting potential redundancy or a transition between service versions.
+
+## System Impact
+
+The contradiction between the alert and metrics suggests one of the following scenarios:
+
+1. **False Positive Alert**: The monitoring system may have triggered an alert despite the service running normally.
+
+2. **Application-Level Issue**: While the containers are running properly from a Kubernetes perspective, the application inside may not be functioning correctly. This would explain why the service appears "down" despite healthy infrastructure metrics.
+
+3. **Connectivity Problem**: The service may be running but unable to communicate with other components, causing it to appear down to dependent services.
+
+4. **Log Collection Issue**: As noted in the initial investigation, there may be a problem with the log collection system, preventing visibility into application-level issues.
+
+## Performance Timeline
+
+The metrics show remarkable stability throughout the monitoring window (2025-11-05T11:37:50Z to 2025-11-05T11:39:50Z):
+
+- All deployment replicas remained constant at 1
+- Pod status remained consistently "Running" (value "1")
+- Memory usage remained steady at 876,384,256 bytes
+- No container restarts occurred
+- All containers maintained "Ready" status
+
+This stability suggests that whatever triggered the alert was not a sudden infrastructure failure or resource constraint, but rather a persistent condition that existed before and during the monitoring period.
+
+## Conclusion and Recommendations
+
+The performance data contradicts the initial assessment that the catalogueserv is down. From an infrastructure perspective, the service appears to be running normally. However, the absence of logs noted in the initial investigation remains concerning.
+
+**Recommended actions:**
+
+1. **Application Health Check**: Perform application-level health checks to verify if the service is responding to requests despite showing healthy container metrics.
+
+2. **Log System Verification**: Investigate why no logs are being captured despite running containers.
+
+3. **Service Mesh Analysis**: Check if there are service mesh or network policy issues preventing the service from communicating with other components.
+
+4. **Alert Configuration Review**: Review the alert criteria to understand why it triggered despite healthy infrastructure metrics.
+
+5. **Multiple Version Investigation**: Determine why three different versions of the catalogueserv are running simultaneously and if this is causing any issues with service discovery or request routing.
+
+The discrepancy between healthy infrastructure metrics and the service being reported as "down" points to an application-level issue rather than an infrastructure problem.
+================================================================================

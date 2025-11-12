@@ -1,0 +1,98 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+- phase_2_PaymentController: N/A entries
+- phase_3_PaymentController: N/A entries
+- phase_4_PaymentController: N/A entries
+- phase_5_PaymentController: N/A entries
+- phase_6_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs provide clear evidence related to the OEM Service Down issue affecting the PaymentController service. We found multiple error entries directly connected to client ID 2796506, which matches the client ID identified in the database analysis.
+
+## What the Logs Show
+
+### Key Error Pattern
+The logs reveal a consistent pattern of product validation failures for client ID 2796506, occurring at the exact time of the reported incident (2025-11-10 15:11:37.447000). These failures continued for several minutes afterward.
+
+### Critical Log Entries
+
+1. **QSparc Offline Parameter Download Failure**:
+   ```
+   2025-11-10 15:12:35,305 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+   ```
+
+2. **QSparc Offline - No Row Found**:
+   ```
+   2025-11-10 15:12:35,305 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: No Row Found, CPL_spGetDetailsForQSparcOffline
+   ```
+
+3. **MST Details Not Found or Fetch Failed**:
+   ```
+   2025-11-10 15:12:32,458 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]
+   ```
+
+4. **Redemption Not Allowed Error**:
+   ```
+   PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+   ```
+
+5. **Memory Copy Fatal Error**:
+   ```
+   2025-11-10 15:12:32,317 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][SecureMemCpy][INFORMATION] FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]
+   ```
+
+### Timeline of Events
+
+- **15:08:44 - 15:13:28**: Multiple "PRODUCT VALIDATION CALL FAILED" errors for client ID 2796506
+- **15:11:37.447**: Initial alert triggered (exact match with one of the product validation failures)
+- **15:12:32 - 15:12:35**: Detailed error logs showing the specific failures in the PaymentController service
+
+## Investigation Summary
+
+### Root Cause Analysis
+
+The logs indicate that the OEM Service Down issue was caused by a failure in the QSparc offline parameter download process. This appears to be related to missing or inaccessible master data (MST details) required for client 2796506's transactions.
+
+The sequence of events suggests:
+
+1. The system attempted to process transactions for client 2796506
+2. A memory allocation error occurred during client detail retrieval (DestinationSize[3] vs SourceSize[11])
+3. This led to failures in retrieving necessary MST details for multiple entity types
+4. The QSparc offline parameter download process failed due to missing data
+5. Transactions were rejected with "REDEMPTION NOT ALLOWED" errors
+
+### System Impact
+
+This issue affected:
+- Payment processing for client 2796506
+- Specifically transaction type 5384 (appears to be a redemption transaction)
+- The client experienced repeated failures over approximately 5 minutes (15:08:44 - 15:13:28)
+
+### Business Impact
+
+The client was unable to process redemption transactions during this period, which likely resulted in:
+- Customer service disruption at point of sale
+- Potential loss of transactions
+- Customer dissatisfaction
+
+## Conclusion
+
+The OEM Service Down alert was triggered by a legitimate service disruption affecting client 2796506. The root cause appears to be a memory allocation error during client detail retrieval, which cascaded into failures retrieving master data and ultimately prevented the QSparc offline parameter download process from completing successfully.
+
+The error pattern suggests a potential mismatch between expected and actual data sizes in the client information retrieval process. This could indicate either:
+1. A data corruption issue for this specific client
+2. A software defect in the memory allocation for client details
+3. A configuration issue causing the system to expect different data sizes than provided
+
+The engineering team should focus on investigating the `ClientInfo::GetClientDetails` function and the memory allocation issue (DestinationSize[3] vs SourceSize[11]) as the likely starting point of this failure chain.
+================================================================================

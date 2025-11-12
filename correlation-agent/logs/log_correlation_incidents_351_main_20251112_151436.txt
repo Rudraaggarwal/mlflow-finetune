@@ -1,0 +1,61 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+## What the Logs Show
+
+The logs provide clear evidence of a payment processing failure for client ID 2796506, which aligns with the reported OEM Service Down issue affecting the PaymentController service. The logs show multiple failures occurring around the reported incident time (2025-11-10 15:11:37).
+
+### Key Log Entries:
+
+1. **Memory Allocation Error** (15:12:32.317):
+   ```
+   [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][SecureMemCpy][INFORMATION] FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]
+   ```
+
+2. **Multiple MST Detail Failures** (15:12:32.364):
+   ```
+   [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [1], ID [2015]
+   [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [2], ID [0]
+   [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]
+   ```
+
+3. **Transaction Rejection** (15:12:32.458):
+   ```
+   [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+   ```
+
+4. **Repeated QSparc Offline Failures** (15:12:32 - 15:12:37):
+   ```
+   [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+   ```
+
+### Client Database Records:
+The database shows multiple "PRODUCT VALIDATION CALL FAILED" errors for client ID 2796506, with the first occurrence at 15:08:44 and continuing through 15:13:28, indicating persistent validation failures over approximately 5 minutes.
+
+## Investigation Summary
+
+The PaymentController service experienced a critical failure affecting client ID 2796506. The root cause appears to be a combination of issues:
+
+1. **Memory Allocation Error**: The logs show a fatal memory error in the ClientInfo::GetClientDetails function where the destination buffer (size 3) was too small for the source data (size 11). This memory allocation issue likely corrupted the client information.
+
+2. **MST Detail Retrieval Failure**: Following the memory error, the system failed to retrieve master transaction (MST) details for multiple entity types, including the client's information (ID 2796506).
+
+3. **QSparc Offline Condition**: The logs repeatedly show "QSparc Offline on Device" errors, indicating that the payment processing component (QSparc) was unavailable. This appears to be a downstream effect of the initial memory allocation failure.
+
+4. **Transaction Rejection**: As a result of these failures, the system rejected the transaction with "REDEMPTION NOT ALLOWED" and set the transaction to a failed state.
+
+The thread ID 152492 is consistently associated with these failures, confirming that we're looking at the correct transaction flow for the reported incident. The timing of the logs (15:12:32 - 15:12:37) aligns with the reported incident time (15:11:37).
+
+This issue would have prevented the client from completing payment transactions, explaining the "OEM Service Down" alert. The persistence of the "PRODUCT VALIDATION CALL FAILED" errors in the database suggests that the system was attempting to recover but continued to encounter the same underlying issue.
+================================================================================

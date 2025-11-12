@@ -1,0 +1,75 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: Logs Error Spike
+Service: paylater
+Timestamp: 2025-11-05T06:22:32Z
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_paylater: N/A entries
+- phase_2_paylater: N/A entries
+- phase_3_paylater: N/A entries
+- phase_4_paylater: N/A entries
+================================================================================
+# PayLater Error Spike Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs contain clear evidence of errors that explain the spike reported on November 5, 2025, at 06:22:32Z. Two distinct issues were identified in the PayLater ecosystem.
+
+## What the Logs Show
+
+### Issue 1: OEM Connector Validation Error (06:20:30Z)
+The OEM connector service encountered a client-side validation error when processing a request from Lenovo:
+
+```
+Timestamp: 2025-11-05T06:20:30.838Z
+Service: oemconnector-5d69ffcb9b-hrxlv
+Error: "Request is not well-formed, syntactically incorrect, or violates schema"
+Root cause: Missing required parameter "merchant.state_code" in the request body
+```
+
+This was a 400 Bad Request error, indicating the client (Lenovo) sent an incomplete request missing required merchant information.
+
+### Issue 2: Catalogue Service NullPointerException (06:18:10Z)
+A more severe error occurred in the catalogue service when processing an EMI calculation:
+
+```
+Timestamp: 2025-11-05T06:18:10.099Z
+Service: catalogueserv-8c45dcbd9-8znwf
+Error: NullPointerException in SingleProductEmiCalculatorImpl.checkIfCcfApplicable (line 174)
+Request: POST /v1/catalogue/calculate-emi
+Response: 500 Internal Server Error
+Device Type: POS_LANDI
+```
+
+This was a server-side error that resulted in a 500 response to the client device, indicating a code failure rather than invalid input.
+
+## Investigation Summary
+
+### Root Causes
+
+1. **OEM Connector Issue**: This appears to be a data validation problem. The Lenovo integration is sending requests without the required `merchant.state_code` field. While this generates errors, the system is correctly rejecting the malformed requests with appropriate 400 status codes.
+
+2. **Catalogue Service Issue**: This is more concerning as it represents an actual application bug. The EMI calculator is attempting to access a null object property in the `checkIfCcfApplicable` method. This results in 500 errors being returned to POS devices trying to calculate EMI options.
+
+### Impact Assessment
+
+- **User Impact**: POS devices (specifically LANDI terminals) are unable to calculate EMI options for purchases, likely preventing customers from completing transactions with installment payment options.
+  
+- **Business Impact**: Failed EMI calculations could directly impact sales conversion rates for higher-value purchases where customers prefer installment options.
+
+- **System Health**: The NullPointerException in the catalogue service is particularly concerning as it represents a code defect rather than a data validation issue. The error occurs in the core EMI calculation logic, which is a critical business function.
+
+## Recommendations
+
+1. **Immediate Fix**: The development team should investigate the NullPointerException in `SingleProductEmiCalculatorImpl.java` line 174. The method is likely not handling a null value properly when checking CCF applicability.
+
+2. **Data Validation**: Work with the Lenovo integration team to ensure they include the required `merchant.state_code` field in all product validation requests.
+
+3. **Monitoring**: Set up specific alerts for 500 errors in the catalogue service, particularly for the EMI calculation endpoint, as these directly impact customer transactions.
+
+4. **Defensive Coding**: Review other similar calculation methods for proper null checks to prevent similar issues in the future.
+
+The error spike appears to be primarily driven by the NullPointerException in the catalogue service, which is a critical issue requiring immediate developer attention.
+================================================================================

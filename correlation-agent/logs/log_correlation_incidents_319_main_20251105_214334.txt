@@ -1,0 +1,100 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: EMI Paylater Catalogue Service Down
+Service: paylater
+Timestamp: 2025-11-05T11:38:50Z
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_paylater: N/A entries
+- phase_2_paylater: N/A entries
+================================================================================
+**Investigation Report – EMI Paylater Catalogue Service Down**  
+*Service:* **paylater** *Severity:* **Medium** *Incident Time:* **2025‑11‑05 11:38:50 UTC**
+
+---
+
+## 1. Initial Assessment  
+**[NO LOGS FOUND]** – The supplied log queries returned empty result sets for both error‑level (`error|failed|exception|fatal`) and informational (`info`) messages during the time window surrounding the incident.
+
+---
+
+## 2. What the Logs Show  
+
+| Query | Expected Scope | Returned Data | Interpretation |
+|-------|----------------|---------------|----------------|
+| **phase_1_paylater** – error‑level search | All containers named `paylater` in namespace `paylater` that contain “error”, “failed”, “exception” or “fatal” (case‑insensitive) | `[]` (empty) | No error‑level entries were recorded in the log store for the period examined. |
+| **phase_2_paylater** – info‑level search | Same containers, looking for “info” | `[]` (empty) | No informational entries were recorded either. |
+
+**Key observations**
+
+1. **Zero log entries** – Neither failures nor normal operation messages appear in the log aggregation system for the affected service at the incident timestamp.
+2. **No timestamps or host identifiers** – Because the result sets are empty, we cannot point to a specific pod, node, or container that experienced the failure.
+3. **No error messages or stack traces** – The usual clues (e.g., “connection refused”, “timeout”, “null pointer”) are absent.
+
+---
+
+## 3. Investigation Summary  
+
+### Why the lack of logs matters  
+- **Visibility Gap:** Logging is the primary telemetry that tells us *what* the service was doing when it went down. Without any entries, we lose the ability to pinpoint the root cause directly from the application layer.
+- **Potential Symptom of a Larger Issue:** An empty log set can itself be a symptom—e.g., the logging agent crashed, the log forwarder was mis‑configured, or the service failed before it could initialize its logger.
+- **Impact on Alert Correlation:** The alert (“EMI Paylater Catalogue Service Down”) was triggered by a health‑check or downstream dependency failure, not by an internal exception that would have been logged.
+
+### Likely causes (based on evidence)
+
+| Possibility | Reasoning | How to verify |
+|-------------|-----------|---------------|
+| **Logging pipeline outage** (e.g., Fluent Bit/Fluentd, Loki, CloudWatch agent) | If the collector stopped, all logs from the pod would be dropped, resulting in empty query results. | Check the health/status of the logging daemonset, look for recent restarts or error metrics in the logging infrastructure. |
+| **Container never started** (crash loop before logger init) | A pod that crashes immediately on start may not emit any log lines, especially if the entrypoint fails before the logger is configured. | Inspect the Kubernetes pod events (`kubectl describe pod <pod>`) and the container status (`kubectl get pod -o jsonpath='{.status.containerStatuses[*].state}'`). |
+| **Log level mis‑configuration** | The service might be set to a level higher than `info` (e.g., `warn` or `error`) and, because no error occurred, nothing is emitted. | Review the service’s configuration files or environment variables that control log verbosity. |
+| **Retention window mismatch** | The query may be looking at a time range that does not include the actual log entries (e.g., logs older than the retention period). | Verify the query time window and the log retention policy of the backend. |
+| **Service health‑check failure unrelated to application code** | The catalogue endpoint could be down due to a downstream dependency (database, cache, network) that caused the health‑check to fail before the app logged anything. | Examine metrics (CPU, memory, network), dependency health dashboards, and any recent deployment or configuration changes. |
+
+### Potential downstream impact  
+
+Even though we cannot see internal error messages, the service outage itself can have the following effects:
+
+| Area | Possible impact |
+|------|-----------------|
+| **Customer experience** | Users attempting to view or use the “Paylater” catalogue would receive errors or empty results, potentially leading to abandoned transactions. |
+| **Order processing** | Downstream services that rely on the catalogue (e.g., recommendation engine, checkout flow) may experience timeouts or fallback behavior. |
+| **Monitoring & alert fatigue** | Repeated alerts without clear log evidence can erode confidence in monitoring and increase mean‑time‑to‑resolution (MTTR). |
+| **SLAs / Business metrics** | A medium‑severity outage of a core catalogue component may affect availability KPIs and could trigger SLA penalties if the duration exceeds agreed thresholds. |
+
+---
+
+## 4. Recommendations  
+
+1. **Validate the logging pipeline**  
+   - Check the status of the logging daemonset (Fluent Bit/Fluentd, Loki, etc.).  
+   - Look for recent restarts, error counters, or back‑pressure alerts.  
+   - Ensure the log forwarder has network connectivity to the log storage backend.
+
+2. **Inspect pod lifecycle events**  
+   - Run `kubectl get pods -n paylater -l app=paylater -o wide` to see current pod states.  
+   - Use `kubectl describe pod <pod>` to view events such as `FailedMount`, `CrashLoopBackOff`, or `OOMKilled`.  
+
+3. **Confirm log level configuration**  
+   - Review the ConfigMap or environment variables that set `LOG_LEVEL`.  
+   - Temporarily set the level to `debug` and redeploy a test pod to verify that logs appear.
+
+4. **Expand the query window**  
+   - Re‑run the log queries with a broader time range (e.g., ±15 minutes) and verify retention settings.  
+
+5. **Correlate with infrastructure metrics**  
+   - Pull CPU, memory, network, and latency metrics for the `paylater` pods around 11:38 UTC.  
+   - Check health of dependent services (database, cache, external APIs) for spikes or failures.
+
+6. **Add fallback health‑check logging**  
+   - Instrument the health‑check endpoint to emit a log line on each check (success or failure). This will guarantee at least one log entry per health‑check cycle.
+
+7. **Post‑mortem documentation**  
+   - Once the root cause is identified, update the run‑book with steps to verify logging health and to quickly differentiate between “application error” vs. “observability gap”.
+
+---
+
+### Bottom Line  
+
+The current log data **does not provide direct evidence** of why the EMI Paylater Catalogue service went down. The absence of any log entries is itself a red flag that points to a possible failure in the logging collection path, an early container crash, or a mis‑configured log level. By confirming the health of the logging infrastructure, reviewing pod events, and correlating with system metrics, the engineering team can uncover the true root cause and prevent similar blind‑spot outages in the future.
+================================================================================

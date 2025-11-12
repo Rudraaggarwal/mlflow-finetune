@@ -1,0 +1,101 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+- phase_2_PaymentController: N/A entries
+- phase_3_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs provide clear evidence related to the reported "OEM Service Down" issue affecting the PaymentController service. The logs show multiple failures for client ID 2796506 at the exact time of the reported incident (2025-11-10 15:11:37).
+
+## What the Logs Show
+
+### Key Findings
+
+1. **QSparc Offline Errors**:
+   Multiple logs show that the PaymentController was unable to communicate with the QSparc service:
+   ```
+   2025-11-10 15:12:37,215 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+   ```
+
+2. **Client Data Retrieval Failures**:
+   The system was unable to retrieve client information properly:
+   ```
+   2025-11-10 15:12:32,364 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]
+   ```
+
+3. **Memory Handling Errors**:
+   Critical memory errors occurred when trying to process client data:
+   ```
+   2025-11-10 15:12:32,317 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][SecureMemCpy][INFORMATION] FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]
+   ```
+
+4. **Product Validation Failures**:
+   The database records show repeated product validation failures for client 2796506:
+   ```
+   2796506,PRODUCT VALIDATION CALL FAILED,2025-11-10 15:11:37.447000
+   ```
+   This timestamp exactly matches the reported incident time.
+
+5. **Transaction Processing Impact**:
+   The logs show that the system attempted to handle transactions but failed with error messages:
+   ```
+   PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+   ```
+
+### Timeline of Events
+
+- **15:08:44 - 15:13:28**: Multiple product validation failures for client 2796506
+- **15:11:37**: Critical failure matching the exact time of the reported incident
+- **15:12:32 - 15:12:37**: Multiple QSparc offline errors and client data retrieval failures
+
+## Investigation Summary
+
+### Root Cause Analysis
+
+Based on the evidence in the logs, the OEM Service Down issue was caused by:
+
+1. **Primary Issue**: The QSparc service was offline or unreachable, as indicated by multiple "QSparc Offline on Device" errors. This is the external OEM service that the PaymentController depends on.
+
+2. **Contributing Factor**: Memory handling errors in the ClientInfo::GetClientDetails function, where the system attempted to copy data between buffers of mismatched sizes (DestinationSize[3] SourceSize[11]).
+
+3. **Impact Mechanism**: When the PaymentController couldn't reach the QSparc service, it attempted to use offline parameter download functionality, which also failed. This created a cascade of failures in transaction processing.
+
+### System Impact
+
+1. **Transaction Processing**: Payments and redemptions were blocked with "REDEMPTION NOT ALLOWED" errors.
+
+2. **Client Experience**: Client 2796506 experienced repeated failures over a 5-minute period (15:08:44 - 15:13:28).
+
+3. **Data Integrity**: The system was unable to validate products, potentially affecting inventory and payment reconciliation.
+
+### Business Impact
+
+The PaymentController service was unable to process transactions properly during this period, which would have directly affected:
+
+- Customer payment processing
+- Product validation
+- Transaction completion
+
+This type of failure typically results in customer-facing issues such as payment rejections, transaction timeouts, or incomplete purchases.
+
+## Recommendations
+
+1. **Immediate Action**: Investigate the connectivity and health of the QSparc service, which appears to be the primary external dependency that failed.
+
+2. **Code Review**: Address the memory handling issue in ClientInfo::GetClientDetails where buffer sizes are mismatched (DestinationSize[3] SourceSize[11]).
+
+3. **Resilience Improvement**: Enhance the offline handling capabilities of the PaymentController to better manage situations when QSparc is unavailable.
+
+4. **Monitoring**: Implement proactive monitoring for the QSparc service connection to detect issues before they impact customers.
+
+This incident demonstrates how an external service dependency (QSparc) can cause cascading failures in the PaymentController service, highlighting the need for improved resilience and error handling.
+================================================================================

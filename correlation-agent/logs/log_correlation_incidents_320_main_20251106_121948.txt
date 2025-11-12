@@ -1,0 +1,86 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: EMI Paylater Catalogue Service Down
+Service: paylater
+Timestamp: 2025-11-06T06:38:50Z
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_catalogueserv: N/A entries
+- phase_2_catalogueserv: N/A entries
+- phase_3_catalogueserv: N/A entries
+- phase_4_paylater: N/A entries
+- phase_5_paylater: N/A entries
+- phase_6_paylater: N/A entries
+================================================================================
+# EMI Paylater Catalogue Service Incident Investigation Report
+
+## Executive Summary
+On November 6, 2025, at 06:38:50 UTC, the EMI Paylater Catalogue Service experienced a service disruption. The issue was caused by a NullPointerException in the EMI calculation functionality, specifically in the `checkIfCcfApplicable` method. The service began returning 500 Internal Server Error responses to client requests, but recovered by 06:43:16 UTC when successful responses were observed.
+
+## Incident Details
+
+### Timeline
+- **06:38:50 UTC**: Initial alert triggered for EMI Paylater Catalogue Service
+- **06:39:50 - 06:42:40 UTC**: Multiple errors logged showing consistent NullPointerException failures
+- **06:43:16 UTC**: Service recovered, successful responses observed
+
+### Root Cause Analysis
+The logs clearly show a `NullPointerException` occurring in the `SingleProductEmiCalculatorImpl.checkIfCcfApplicable` method (line 174). This error consistently appeared when clients made POST requests to the `/v1/catalogue/calculate-emi` endpoint.
+
+**Key Error Pattern:**
+```
+java.lang.NullPointerException
+at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.checkIfCcfApplicable(SingleProductEmiCalculatorImpl.java:174)
+```
+
+The error propagated through the application's call stack:
+1. Started in `checkIfCcfApplicable` method
+2. Called from `getIssuerEmiCalculationResultMapForNonNBFC` (line 153)
+3. Called from `getEMICalculation` (line 124)
+4. Called from `calculateEmi` in `OfflineEmiCalculatorServiceImpl` (line 282)
+5. Called from `calculateEmiPost` in `CalculateEmiApiImpl` (line 78)
+
+### Impact
+During the incident period (approximately 4-5 minutes):
+- All EMI calculation requests failed with 500 Internal Server Error responses
+- Mobile clients using build version "UP1A.231005.007__251104" were affected
+- The service was unable to process EMI calculations for financial transactions
+
+### Resolution
+The service recovered without manual intervention. By 06:43:16 UTC, the logs show successful responses with HTTP 200 status codes. The recovery appears to have happened automatically, possibly due to:
+
+1. A configuration change taking effect
+2. An automatic service restart
+3. A change in the input data that avoided the null reference
+
+## Technical Analysis
+
+### Error Details
+The NullPointerException occurred because the code attempted to access a property or method of a null object. Since no specific variable is mentioned in the error message, the issue is likely with one of these scenarios:
+
+1. A required configuration value was missing
+2. A database lookup returned null
+3. An expected object in the processing chain was not properly initialized
+
+### Recovery Evidence
+At 06:43:16 UTC, logs show the service successfully processing EMI calculation requests:
+- The same endpoint (`/v1/catalogue/calculate-emi`) that was previously failing began working
+- Complete response data was returned, including EMI options for HDFC Debit Card
+- The response included proper calculation of interest rates, loan amounts, and monthly EMI amounts
+
+## Recommendations
+
+1. **Code Fix**: Add null checks in the `checkIfCcfApplicable` method to prevent NullPointerExceptions
+   
+2. **Monitoring Enhancement**: Implement specific alerts for NullPointerExceptions in critical payment processing paths
+
+3. **Defensive Programming**: Review similar calculation methods for potential null reference issues
+
+4. **Error Handling**: Improve error messages to include which specific object was null to speed up future troubleshooting
+
+5. **Testing**: Create test cases that specifically validate the EMI calculation with edge cases that might produce null values
+
+## Conclusion
+The EMI Paylater Catalogue Service experienced a brief outage due to a NullPointerException in the EMI calculation logic. The service recovered automatically within approximately 5 minutes. This incident highlights the need for more robust null checking in the codebase, particularly in financial calculation methods where null values might be encountered.
+================================================================================

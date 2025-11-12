@@ -1,0 +1,98 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: Logs Error Spike
+Service: paylater
+Timestamp: 2025-11-05T06:22:32Z
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_paylater: N/A entries
+- phase_2_paylater: N/A entries
+- phase_3_paylater: N/A entries
+- phase_4_paylater: N/A entries
+- phase_5_paylater: N/A entries
+- phase_6_paylater: N/A entries
+================================================================================
+# PayLater Service Error Spike Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs provide clear evidence of multiple critical errors occurring in the PayLater service ecosystem around the time of the reported incident (2025-11-05T06:22:32Z).
+
+## What the Logs Show
+
+### Primary Issues Identified
+
+1. **Client Validation Error in OEM Connector Service**
+   - **Timestamp:** 2025-11-05T06:20:30.838Z
+   - **Service:** oemconnector (paylater namespace)
+   - **Error Type:** ApplicationException - INVALID_REQUEST
+   - **Root Cause:** Missing required parameter "merchant.state_code" in the request body
+   - **Impact:** Client requests to the product validation endpoint (/v1/oem/product-validate) were failing with 400 errors
+
+2. **Null Pointer Exception in Catalogue Service**
+   - **Timestamp:** 2025-11-05T06:18:10.098Z
+   - **Service:** catalogueserv (paylater namespace)
+   - **Error Type:** NullPointerException
+   - **Location:** SingleProductEmiCalculatorImpl.checkIfCcfApplicable (line 174)
+   - **Impact:** EMI calculation requests were failing with 500 Internal Server Error responses
+
+3. **Database Timeout Issues in Affordability Service**
+   - **Timestamp:** Multiple occurrences between 2025-11-05T06:27:14Z and 2025-11-05T06:27:29Z
+   - **Service:** affordability-readserv (paylater namespace)
+   - **Error Type:** TimeoutException
+   - **Root Cause:** Database queries timing out when fetching offer parameters
+   - **Impact:** Multiple threads experiencing the same timeout issue, causing cascading failures
+
+### Error Patterns and Sequence
+
+1. The initial errors appear in the catalogue service around 06:18:10Z with a null pointer exception during EMI calculations.
+
+2. Shortly after, at 06:20:30Z, the OEM connector service begins reporting validation errors for product validation requests from Lenovo.
+
+3. By 06:27:14Z, the affordability service shows multiple database timeout errors, suggesting the problem has cascaded to affect offer parameter retrieval.
+
+4. Redis fallback mechanisms were triggered but ultimately failed to resolve the issues, as evidenced by the "Redis retrieval failed - falling back to DB" messages followed by timeout exceptions.
+
+## Investigation Summary
+
+### Root Cause Analysis
+
+The evidence points to a cascading failure that likely originated with the EMI calculation service:
+
+1. **Initial Trigger:** The null pointer exception in the SingleProductEmiCalculatorImpl indicates that a required object was unexpectedly null when checking CCF (Credit Conversion Factor) applicability. This suggests either:
+   - A data integrity issue in the product configuration
+   - A recent code change that didn't properly handle null values
+
+2. **Propagation to OEM Connector:** As the catalogue service began failing, the OEM connector service started receiving malformed requests missing the required "merchant.state_code" parameter, suggesting that upstream services were not properly populating this field.
+
+3. **Database Pressure:** The repeated failures likely led to connection pool exhaustion and increased database load, eventually causing the timeout issues observed in the affordability service.
+
+### System Impact
+
+1. **User Experience:** Customers attempting to use the PayLater service for EMI calculations or product validation would have received error responses.
+
+2. **Business Impact:** The errors affected critical payment flows:
+   - Product validation failures would prevent users from completing purchases
+   - EMI calculation failures would prevent users from seeing financing options
+   - Timeout errors would cause slow responses and potential transaction failures
+
+3. **System Health:** The logs show multiple services in the PayLater ecosystem experiencing related failures, indicating a systemic issue rather than an isolated problem.
+
+## Conclusions and Recommendations
+
+1. **Immediate Action:** The null pointer exception in SingleProductEmiCalculatorImpl.checkIfCcfApplicable() should be addressed by adding proper null checks and error handling.
+
+2. **Data Validation:** Implement stronger validation for the merchant.state_code parameter in the OEM connector service to provide clearer error messages.
+
+3. **Database Optimization:** Investigate the database timeout issues in the affordability service, potentially:
+   - Optimizing the queries used to fetch offer parameters
+   - Increasing connection pool sizes or timeout thresholds
+   - Implementing more robust caching to reduce database load
+
+4. **Monitoring Enhancement:** Set up specific alerts for NullPointerExceptions in the EMI calculation flow, as this appears to be a fragile part of the system.
+
+5. **Resilience Testing:** Conduct failure testing to ensure that Redis fallback mechanisms work properly under load conditions.
+
+This incident demonstrates how a seemingly small issue (null pointer exception) can cascade through interconnected microservices, eventually causing widespread failures across the payment processing ecosystem.
+================================================================================

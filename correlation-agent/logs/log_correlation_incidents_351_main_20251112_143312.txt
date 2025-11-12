@@ -1,0 +1,73 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+- phase_2_PaymentController: N/A entries
+- phase_3_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+## What the Logs Show
+
+The logs reveal a critical issue with the PaymentController service that began at 15:11:37 on November 10, 2025, affecting client ID 2796506. The problem appears to be related to product validation failures that prevented payment processing.
+
+### Key Findings:
+
+1. **Multiple Product Validation Failures**:
+   - Client ID 2796506 experienced repeated "PRODUCT VALIDATION CALL FAILED" errors
+   - These failures occurred in sequence from 15:08:44 to 15:13:28, indicating a persistent issue
+
+2. **QSparc Offline Parameter Download Failures**:
+   - Thread ID 152492 shows multiple failures with the message:
+   ```
+   QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+   ```
+   - These errors occurred at 15:12:37, 15:12:35, and 15:12:32
+
+3. **MST Details Retrieval Failures**:
+   - The system was unable to retrieve necessary master data:
+   ```
+   MST details not found or fetch failed for Type [3], ID [2796506]
+   ```
+   - This indicates database connectivity or data integrity issues
+
+4. **Memory Allocation Errors**:
+   - Multiple instances of fatal memory errors were logged:
+   ```
+   FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]
+   ```
+   - This suggests buffer overflow risks when handling client data
+
+5. **Transaction Processing Impact**:
+   - The system attempted to send error messages to clients:
+   ```
+   PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+   ```
+   - This indicates transactions were being rejected due to the underlying issues
+
+## Investigation Summary
+
+The OEM Service Down alert was triggered by a cascading failure that began with product validation issues. When client ID 2796506 attempted to process payments, the PaymentController service was unable to validate products due to the QSparc component being offline.
+
+The root cause appears to be a connectivity issue between the PaymentController and the QSparc service, which is responsible for parameter downloads and product validation. This is evidenced by the repeated "QSparc Offline on Device" messages in thread ID 152492.
+
+The system attempted to handle these failures gracefully by sending error messages to clients, but the underlying issue persisted. The memory allocation errors suggest that the system may have been attempting to process incomplete data received from the offline QSparc service, leading to buffer overflow risks.
+
+This failure had a direct impact on payment processing capabilities, as shown by the "REDEMPTION NOT ALLOWED" messages being sent to clients. The persistence of these errors over a 5-minute period (15:08:44 to 15:13:28) indicates this was not a transient issue but a sustained service disruption.
+
+### Recommendations:
+
+1. Investigate the connectivity between PaymentController and QSparc services
+2. Review the memory allocation in the ClientInfo::GetClientDetails function to prevent buffer overflows
+3. Implement more robust error handling for cases when QSparc is offline
+4. Consider adding redundancy for the product validation service to prevent single points of failure
+
+This incident demonstrates how a dependency failure (QSparc being offline) can cascade into multiple error conditions affecting critical payment processing functionality.
+================================================================================

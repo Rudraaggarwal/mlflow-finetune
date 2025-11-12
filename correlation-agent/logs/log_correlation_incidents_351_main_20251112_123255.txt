@@ -1,0 +1,84 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_2_PaymentController: N/A entries
+- phase_1_PaymentController: N/A entries
+================================================================================
+**Investigation Report – PaymentController (OEM Service Down)**  
+
+---
+
+### 1. Initial Assessment  
+**[NOT RELEVANT / NO CLEAR FAILURE LOGS FOUND]**  
+
+The log excerpts supplied are largely *informational* messages that describe normal start‑up of the `PaymentController` and its interaction with the Pine360 OEM service (printer interface). There are **no explicit error, exception, or timeout failures** that directly indicate the OEM service went down at the reported time (2025‑11‑10 15:11:37.4473).  
+
+---
+
+### 2. What the Logs Show  
+
+| Timestamp (raw) | Human‑readable time* | Log excerpt (trimmed) | Component / Context |
+|-----------------|----------------------|-----------------------|---------------------|
+| 1762767757389290200 | 2025‑11‑10 15:12:37.308 | `PrinterType: ANDROID_48` | CPine360Interface – printer detection |
+| 1762767757389288100 | 2025‑11‑10 15:12:37.308 | `StoreId: 18421` | CPine360Interface – store identification |
+| 1762767757389285900 | 2025‑11‑10 15:12:37.308 | `Terminalid: 5034388` | CPine360Interface – terminal ID |
+| 1762767757389283800 | 2025‑11‑10 15:12:37.308 | `ProceCode: 92` | CPine360Interface – process code |
+| 1762767757389281700 | 2025‑11‑10 15:12:37.308 | `SequenceCode: 000003000001` | CPine360Interface – transaction sequence |
+| 1762767757389279600 | 2025‑11‑10 15:12:37.308 | `TimeOut: 15000` | CPine360Interface – configured timeout (15 s) |
+| 1762767757389277500 | 2025‑11‑10 15:12:37.308 | `URL: https://txnuat.pineperks.in` | CPine360Interface – endpoint for OEM service |
+| 1762767757389275300 | 2025‑11‑10 15:12:37.308 | `PINE360 SETTLEMENT` | CPine360Interface – start of settlement flow |
+| 1762767757389274100 | 2025‑11‑10 15:12:37.308 | `TimeOut: 1` (IsLoggingEnable) | Logging subsystem – very short timeout for log flushing |
+| 1762767757389272700 | 2025‑11‑10 15:12:37.308 | `MaxConnxLimit: 20` | CPine360Interface – max concurrent connections |
+| 1762767757389271500 | 2025‑11‑10 15:12:37.308 | `TimeOut: 15000` (Init_InterfacePtr) | CPine360Interface – re‑affirmed timeout |
+| 1762767757389270500 | 2025‑11‑10 15:12:37.308 | `URL: https://txnuat.pineperks.in` (Init_InterfacePtr) | CPine360Interface – re‑affirmed endpoint |
+| 1762767757389268300 | 2025‑11‑10 15:12:37.293 | `*****************************************************************************` | CPine360Interface – visual separator in logs |
+| 1762767757389267200 | 2025‑11‑10 15:12:37.293 | `PL_spGetClientHardwareFamilyName SP SUCCESS … Family Name [ANDROID]` | Sub‑system query – hardware family resolved successfully |
+| 1762767757389266100 | 2025‑11‑10 15:12:37.293 | `Tracepoint Exited : Function CPL_spGetClientHardwareFamilyName::OpenAll | Execution duration: 3 ms` | Tracepoint – function completed quickly |
+| 1762767757389265100 | 2025‑11‑10 15:12:37.293 | `Tracepoint Entered: Function CPL_spGetClientHardwareFamilyName::OpenAll` | Tracepoint – function start |
+| 1762767757389264000 | 2025‑11‑10 15:12:37.293 | `Inside FetchAsciiDisplayMessageDataFromCache` | Cache lookup – normal operation |
+| 1762767757389263000 | 2025‑11‑10 15:12:37.293 | `Tracepoint Exited : Function CPL_spGetSubSystemConfigMappingDetailsNewSubSystem::OpenAll | Execution duration: 11 ms` | Sub‑system config mapping – completed |
+| 1762767757389261900 | 2025‑11‑10 15:12:37.277 | `Tracepoint Entered: Function CPL_spGetSubSystemConfigMappingDetailsNewSubSystem::OpenAll` | Sub‑system config mapping – start |
+| 1762767757389260800 | 2025‑11‑10 15:12:37.277 | `Tracepoint Exited : Function CPL_spGetClientCapabilityDetails::OpenAll | Execution duration: 0 ms` | Capability query – completed instantly |
+| 1762767757389259800 | 2025‑11‑10 15:12:37.277 | `Tracepoint Entered: Function CPL_spGetClientCapabilityDetails::OpenAll` | Capability query – start |
+
+\*The timestamps are stored as nanosecond‑epoch strings; they have been converted to the human‑readable time shown in the original log lines (all around **15:12:37** on 10‑Nov‑2025).
+
+#### Observations  
+
+1. **All entries are INFO‑level** – there are no `ERROR`, `WARN`, `EXCEPTION`, or stack‑trace messages.  
+2. The **OEM service endpoint (`https://txnuat.pineperks.in`)** is logged repeatedly, but there is no follow‑up log indicating a failed HTTP request, a connection refusal, or a timeout breach.  
+3. The **configured timeout is 15 000 ms (15 s)**, yet the logs do not show any “timeout exceeded” or “retry” messages.  
+4. The **hardware‑family lookup succeeded** (`ANDROID`), and the **cache fetch** completed – suggesting the controller was able to resolve required data.  
+5. The logs are **dense with blank lines** (`"{\"log\":\"\"}"`) that may be placeholders for missing log content (e.g., suppressed error output).  
+
+---
+
+### 3. Investigation Summary  
+
+| Point | Explanation |
+|-------|-------------|
+| **Why the logs matter** | They confirm that the `PaymentController` started a settlement flow, successfully retrieved configuration data, and attempted to contact the Pine360 OEM service using the expected URL and timeout settings. |
+| **Likely cause of “OEM Service Down”** | The absence of any error or timeout log suggests one of three possibilities: <br>1. **Logging gap** – the component that detects a downstream service failure (e.g., HTTP client) is not writing to the same Loki/Promtail stream, so the failure is invisible here. <br>2. **Silent failure handling** – the code may swallow connection errors and continue without logging, merely returning a failure status to the caller (which then triggers the alert). <br>3. **Alert mis‑fire** – the monitoring rule may have been triggered by a metric (e.g., health‑check endpoint) that is not reflected in these application logs. |
+| **Potential impact on the system** | If the OEM service (the Pine360 settlement endpoint) truly became unreachable: <br>• **Payment transactions** could not be settled, leading to pending or failed payments for end‑users. <br>• **Retry/back‑off logic** (if present) might queue requests, increasing memory/queue pressure on the `PaymentController`. <br>• Down‑stream services that depend on settlement confirmation (order fulfillment, receipt generation) would be blocked, potentially causing a cascade of timeouts. |
+| **Effect on other services** | Other micro‑services that poll the `PaymentController` for transaction status would receive “in‑progress” or “failed” responses, possibly triggering their own alerts. Customer‑facing UI layers would show error messages or “payment could not be completed”. |
+| **Evidence‑based conclusion** | The supplied logs **do not contain a direct error** indicating the OEM service was down. They only show normal initialization and configuration steps. The alert is therefore **not corroborated by the visible log data**; the root cause likely resides in a part of the system that either (a) logs elsewhere, (b) suppresses the failure, or (c) is monitored via a health‑check metric rather than application logs. |
+
+---
+
+### 4. Recommendations  
+
+1. **Verify logging configuration** for the HTTP client / external‑service wrapper used by `PaymentController`. Ensure that connection failures, HTTP status codes, and exception stack traces are emitted at `WARN` or `ERROR` level.  
+2. **Correlate with monitoring metrics** – check the health‑check endpoint, circuit‑breaker counters, or Prometheus metrics that triggered the “OEM Service Down” alert.  
+3. **Add explicit error handling logs** around the call to `https://txnuat.pineperks.in` (e.g., “Failed to reach OEM service – status X, error Y”).  
+4. **Review alert thresholds** – if the alert is based on a latency or failure‑rate metric, confirm that the metric source aligns with the application logs.  
+5. **Run a controlled test** (e.g., temporarily block outbound traffic to the OEM URL) and verify that an error entry appears in the logs; this will confirm the logging path.  
+
+---
+
+**Bottom line:** The current log set shows normal operation of the `PaymentController` up to the point where it would contact the OEM service, but it does **not** capture any failure. The alert likely originates from a component or metric not represented in these logs, or from suppressed error handling. Adjust logging and monitoring to surface the failure details for faster root‑cause analysis in future incidents.
+================================================================================

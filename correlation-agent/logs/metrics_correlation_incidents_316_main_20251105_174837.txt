@@ -1,0 +1,74 @@
+================================================================================
+METRICS CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: Logs Error Spike
+Service: paylater
+Timestamp: 2025-11-05T06:22:32Z
+================================================================================
+FETCHED METRICS SUMMARY:
+- query_2: http_errors
+- query_3: cpu_usage
+- query_4: memory_usage
+- query_5: request_rate
+- query_6: jvm_memory
+- query_7: resource_limits
+- query_8: resource_requests
+- query_9: jvm_exceptions
+================================================================================
+# PayLater Error Spike Performance Analysis
+
+## Primary Issue
+The error spike alert was triggered at 06:22:32Z, but our performance data shows **no HTTP errors** during the monitored window (06:21:32Z to 06:23:32Z). This suggests the errors reported in the previous investigation (OEM connector validation errors and catalogue service NullPointerExceptions) had already subsided by the time our monitoring captured the data.
+
+## Related Performance Issues
+
+### Catalogue Service
+1. **CPU Usage**: The catalogueserv container showed fluctuating CPU usage between 0.0016 and 0.0025 CPU cores (0.16% to 0.25% of its 1.024 core limit). This is significantly below its resource allocation of 0.6 cores (request) and 1.024 cores (limit).
+
+2. **Memory Usage**: Memory consumption remained completely stable at 864,223,232 bytes (824MB), which is approximately 81% of its requested memory (1GB) and 27% of its limit (3GB).
+
+### OEM Connector
+1. **CPU Usage**: The oemconnector showed consistent low CPU usage around 0.001 CPU cores (0.5% of its 0.2 core allocation), with a slight increase to 0.0011 cores at the end of the monitoring period.
+
+2. **Memory Usage**: Memory remained constant at 296,673,280 bytes (283MB), which is about 53% of both its requested and limit memory allocation (512MB).
+
+## System Impact
+Despite the previous investigation identifying critical errors, the performance metrics during our monitoring window show:
+
+1. **No Resource Constraints**: Both services were operating well below their CPU and memory allocations, indicating the issue was not resource-related.
+
+2. **No Active HTTP Errors**: The query for HTTP error rates returned empty results, suggesting the error conditions had resolved or were intermittent.
+
+3. **No JVM Exceptions**: The JVM exceptions query returned empty results for the catalogueserv, despite the previous investigation noting NullPointerExceptions.
+
+4. **No Request Activity**: The query for request rates on the specific endpoints (/v1/oem/product-validate and /v1/catalogue/calculate-emi) returned empty results, indicating either no traffic or the monitoring system not capturing this data.
+
+## Performance Timeline
+
+The performance metrics show remarkable stability throughout the monitored period:
+
+- **06:21:32Z - 06:22:32Z**: Both services showed stable resource usage with no significant fluctuations.
+- **06:22:32Z**: Alert triggered, but performance metrics remained stable.
+- **06:22:32Z - 06:23:32Z**: Slight increase in catalogueserv CPU usage to 0.0025 cores at 06:23:10Z, but still well within normal parameters.
+- **06:23:10Z - 06:23:32Z**: Small increase in oemconnector CPU usage to 0.0011 cores, but not significant enough to indicate a problem.
+
+## Conclusions
+
+1. **Timing Mismatch**: The performance data we're examining (06:21:32Z to 06:23:32Z) likely represents the period after the actual error spike occurred. The previous investigation identified errors at 06:18:10Z and 06:20:30Z, which is before our monitoring window.
+
+2. **No Resource Constraints**: The errors were not caused by resource limitations, as both services were operating well below their allocated resources.
+
+3. **Error Resolution**: By the time of our monitoring window, the error conditions appear to have naturally resolved or stopped occurring, as evidenced by the absence of HTTP errors and JVM exceptions.
+
+4. **System Recovery**: The stable resource usage suggests the system recovered without intervention, though the root causes identified in the previous investigation (NullPointerException in EMI calculator and missing merchant.state_code in OEM requests) likely still need to be addressed.
+
+## Recommendations
+
+1. **Extend Monitoring Window**: Expand the performance data collection to include the period from 06:17:00Z to 06:21:32Z to capture the actual error events.
+
+2. **Implement Error Tracking**: Add specific metrics to track NullPointerExceptions in the catalogueserv and validation errors in the oemconnector.
+
+3. **Address Root Causes**: Proceed with the fixes recommended in the previous investigation to prevent recurrence of these issues.
+
+4. **Correlation Improvement**: Enhance alert correlation to include performance data from before the alert trigger time to better understand the lead-up to incidents.
+================================================================================

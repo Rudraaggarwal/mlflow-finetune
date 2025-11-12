@@ -1,0 +1,90 @@
+================================================================================
+METRICS CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: EMI Paylater Catalogue Service Down
+Service: paylater
+Timestamp: 2025-11-06T06:38:50Z
+================================================================================
+FETCHED METRICS SUMMARY:
+- query_1: alert_causing
+- query_2: error_rate
+- query_3: cpu_usage
+- query_4: memory_usage
+- query_5: jvm_exceptions
+- query_6: request_rate
+- query_7: pod_restarts
+- query_8: resource_limits
+- query_9: resource_requests
+================================================================================
+# EMI Paylater Catalogue Service Performance Analysis Report
+
+## Primary Issue
+
+The EMI Paylater Catalogue Service experienced a service disruption on November 6, 2025, at 06:38:50 UTC due to a NullPointerException in the EMI calculation functionality. The performance data shows:
+
+- **Deployment Status**: The catalogueserv deployment maintained 1 available replica throughout the incident period, indicating the pod remained running despite the application errors
+- **Error Metrics**: No error rate metrics were captured in Prometheus during the incident window (06:37:50Z to 06:39:50Z), suggesting the monitoring system may not have registered the 500 errors identified in the logs
+
+## Related Performance Issues
+
+**Resource Utilization:**
+- **CPU Usage**: The service was using minimal CPU resources (approximately 0.0056 cores or 0.55% of its 1.024 core limit) before the incident
+- **CPU Trend**: A noticeable drop in CPU utilization occurred at 06:41:40Z, decreasing from 0.0054 to 0.0039 cores (a 28% reduction)
+- **Memory Usage**: Memory remained stable at 876MB for the UAT environment and 563MB for the SIT environment, both well below the 1GB (1073741824 bytes) request limit
+
+**Service Health:**
+- **Container Restarts**: No container restarts were recorded during the incident period, confirming the service did not crash or restart automatically
+- **JVM Exceptions**: The Prometheus metrics show no JVM exceptions were captured during this period, despite the NullPointerException occurring in the application logs
+
+## System Impact
+
+The impact of this incident was limited but significant for affected users:
+
+1. **Service Availability**: The `/v1/catalogue/calculate-emi` endpoint returned 500 errors for approximately 4-5 minutes (06:38:50Z to 06:43:16Z)
+2. **User Experience**: Mobile clients using build version "UP1A.231005.007__251104" were unable to calculate EMI options during the incident
+3. **Business Impact**: Financial transactions requiring EMI calculations were temporarily blocked, potentially affecting customer purchase decisions
+
+## Performance Timeline
+
+**06:38:50Z - 06:39:50Z (Captured in Performance Data):**
+- Service pod remained running with stable resource allocation
+- No container restarts occurred
+- Memory usage remained consistent at 876MB (UAT) and 563MB (SIT)
+- CPU usage was normal at approximately 0.0056 cores
+
+**06:39:50Z - 06:41:40Z (Based on Investigation Report):**
+- Multiple NullPointerException errors occurred in the `checkIfCcfApplicable` method
+- Service continued returning 500 errors to client requests
+- No visible impact on container health metrics
+
+**06:41:40Z - 06:43:16Z:**
+- CPU usage dropped by 28% (from 0.0054 to 0.0039 cores)
+- This CPU reduction may indicate fewer requests being processed or a change in application behavior
+- Service began recovery process without container restarts
+
+**06:43:16Z:**
+- Service resumed normal operation with successful responses
+- Recovery occurred without manual intervention or container restarts
+
+## Analysis and Conclusions
+
+1. **Root Cause Confirmation**: The performance data supports the investigation finding that a NullPointerException in the EMI calculation code caused the service disruption. The stable pod metrics confirm this was an application-level issue rather than an infrastructure problem.
+
+2. **Recovery Mechanism**: The absence of container restarts suggests the service recovered through an application-level mechanism rather than a pod restart. The 28% drop in CPU usage around 06:41:40Z may indicate a change in request patterns or application behavior that contributed to the recovery.
+
+3. **Monitoring Gap**: The lack of error rate metrics and JVM exception data in Prometheus during a known error period indicates a potential gap in monitoring coverage. This could delay future incident detection and response.
+
+4. **Resource Efficiency**: The service was operating at approximately 0.55% of its CPU limit and 82% of its memory request, suggesting the resource allocation is appropriate for normal operation but could potentially be optimized.
+
+## Recommendations
+
+1. **Enhance Error Monitoring**: Configure Prometheus to properly capture HTTP 500 errors and JVM exceptions for the catalogueserv container to improve visibility into application errors.
+
+2. **Implement Circuit Breakers**: Consider implementing circuit breakers around the EMI calculation functionality to prevent cascading failures when null values are encountered.
+
+3. **Resource Optimization**: Review memory allocation for the SIT environment, which is using only 52% of its requested memory, to potentially free up cluster resources.
+
+4. **Automated Recovery Testing**: Develop tests to verify the service's self-healing capabilities since it recovered without container restarts.
+
+5. **Correlation Improvement**: Enhance correlation between application logs and performance metrics to provide better context during incident investigation.
+================================================================================

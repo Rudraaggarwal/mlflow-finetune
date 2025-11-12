@@ -1,0 +1,93 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController - Thread 158360: N/A entries
+- phase_1_PaymentController - Thread 152492: N/A entries
+- phase_2_PaymentController - All Logs: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs provided contain relevant information about the OEM Service Down issue affecting the PaymentController service. The logs specifically show transactions related to client ID 2796506, which matches the client ID identified in the database analysis with "PRODUCT VALIDATION CALL FAILED" errors.
+
+## What the Logs Show
+
+### Key Findings
+
+1. **QSparc Offline Issue**:
+   - At 15:12:35.305 on 2025-11-10, the PaymentController service logged that "QSparc Offline on Device" for client ID 2796506
+   - The system attempted to handle QSparc offline parameter download but failed with the message: "bFnHandleQSparcOfflineParameterDownload Failed"
+   - The specific error was "No Row Found, CPL_spGetDetailsForQSparcOffline"
+
+2. **Transaction Processing Attempt**:
+   - The logs show the PaymentController was processing a transaction (ISO 220) for client ID 2796506
+   - The transaction was rejected with "REDEMPTION NOT ALLOWED" message
+   - The system attempted to perform an addon transaction but required additional information
+
+3. **Client Validation Status**:
+   - The client's TLE (Terminal Line Encryption) status was checked and found to be active:
+     - "Client_ IS_TLE[1] IS_PINE_KEY_UPDATED[1]"
+   - This indicates the client's encryption was properly configured
+
+4. **Timing of Failures**:
+   - The logs show transaction processing at 15:12:35, which aligns with the database records showing "PRODUCT VALIDATION CALL FAILED" errors at 15:11:37, 15:12:11, and 15:12:52
+   - This indicates repeated failures over a period of several minutes
+
+### Detailed Log Analysis
+
+The most critical log entries are:
+
+```
+2025-11-10 15:12:35,305 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+```
+
+```
+2025-11-10 15:12:35,305 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: No Row Found, CPL_spGetDetailsForQSparcOffline
+```
+
+```
+2025-11-10 15:12:35,305 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] CSubSystemHandler::PerformAddonTxn ProcessAddonTxn ADDITINAL INFO REQUIRED Message[REDEMPTION NOT ALLOWED]
+```
+
+These logs indicate that the PaymentController was unable to process transactions for client 2796506 because the QSparc service was offline, preventing product validation.
+
+## Investigation Summary
+
+### Root Cause
+
+Based on the evidence in the logs, the root cause of the "OEM Service Down" issue appears to be:
+
+1. **QSparc Service Unavailability**: The QSparc service, which is responsible for product validation, was offline or unreachable from the PaymentController service.
+
+2. **Database Connectivity Issue**: The system attempted to retrieve offline parameters for QSparc using the stored procedure `CPL_spGetDetailsForQSparcOffline`, but no rows were found, suggesting either:
+   - Missing configuration data for offline operations
+   - Database connectivity issues preventing proper data retrieval
+
+### System Impact
+
+1. **Failed Transactions**: Client ID 2796506 experienced multiple failed product validation attempts between 15:08 and 15:13, as shown in the database records.
+
+2. **Payment Processing Disruption**: The PaymentController service was unable to complete payment transactions that required product validation, resulting in "REDEMPTION NOT ALLOWED" responses.
+
+3. **User Experience**: Customers attempting to make payments through terminals associated with client ID 2796506 would have experienced transaction failures and service unavailability.
+
+### Connection to Alert
+
+The "OEM Service Down" alert was triggered at 15:11:37.4473, which precisely matches one of the "PRODUCT VALIDATION CALL FAILED" timestamps in the database records. This confirms that the alert was directly related to the QSparc offline issue identified in the logs.
+
+## Conclusion
+
+The PaymentController service experienced a critical issue due to the QSparc service being offline, preventing product validation for client ID 2796506. The system attempted to use offline parameters but failed to retrieve the necessary data from the database. This resulted in multiple failed transactions over a period of approximately 5 minutes.
+
+The issue appears to be a dependency failure where the PaymentController service could not function properly without the QSparc service being available. To prevent similar issues in the future, the engineering team should:
+
+1. Improve the offline fallback mechanism to ensure transactions can continue when QSparc is unavailable
+2. Verify that the database contains proper offline parameters for all clients
+3. Implement more robust monitoring of the QSparc service to detect and address outages before they impact transactions
+================================================================================

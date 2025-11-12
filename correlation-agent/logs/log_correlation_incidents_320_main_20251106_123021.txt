@@ -1,0 +1,81 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: EMI Paylater Catalogue Service Down
+Service: paylater
+Timestamp: 2025-11-06T06:38:50Z
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_catalogueserv: N/A entries
+- phase_2_catalogueserv: N/A entries
+- phase_3_catalogueserv: N/A entries
+- phase_4_paylater: N/A entries
+- phase_5_paylater: N/A entries
+- phase_6_paylater: N/A entries
+================================================================================
+# EMI Paylater Catalogue Service Outage Investigation Report
+
+## Executive Summary
+The Paylater Catalogue Service experienced a service disruption on November 6, 2025, starting at approximately 06:38:50 UTC. The root cause was identified as a null pointer exception in the EMI calculation functionality. The service began recovering at 06:43:16 UTC when successful responses were observed. This outage affected users attempting to calculate EMI options for purchases.
+
+## Detailed Analysis
+
+### Issue Identification
+The logs clearly show that the Paylater Catalogue Service was returning 500 Internal Server Error responses when users attempted to use the `/v1/catalogue/calculate-emi` endpoint. The error was consistently a null pointer exception occurring in the same component.
+
+### Root Cause
+The error logs reveal a null pointer exception in the `SingleProductEmiCalculatorImpl.checkIfCcfApplicable()` method at line 174. This exception propagated through the application stack, causing the service to fail when processing EMI calculation requests.
+
+Key error details:
+```
+java.lang.NullPointerException
+at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.checkIfCcfApplicable(SingleProductEmiCalculatorImpl.java:174)
+at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.getIssuerEmiCalculationResultMapForNonNBFC(SingleProductEmiCalculatorImpl.java:153)
+at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.getEMICalculation(SingleProductEmiCalculatorImpl.java:124)
+```
+
+This indicates that the service was attempting to access a null object property in the CCF (likely Credit Conversion Factor) applicability check. The error occurred consistently across multiple requests between 06:39:50 and 06:42:40.
+
+### Timeline of Events
+
+1. **06:38:50 UTC** - Issue begins (based on alert time)
+2. **06:39:50 UTC** - First logged error showing 500 response with null pointer exception
+3. **06:40:49 UTC** - Continued errors with the same null pointer exception
+4. **06:42:40 UTC** - Last observed error with the same pattern
+5. **06:43:16 UTC** - Service recovery observed with successful 200 response for an EMI calculation request
+
+### Impact
+Users attempting to calculate EMI options for purchases would have received error messages instead of the expected EMI calculation results. This would have prevented them from completing transactions using the EMI payment option. The issue appears to have lasted approximately 4-5 minutes.
+
+The successful response at 06:43:16 shows that when working properly, the service returns EMI options including:
+- Interest rates (e.g., 11.0% on HDFC Debit Card)
+- Monthly payment amounts
+- Total payment amounts
+- Available tenure options
+
+### Recovery
+The service appears to have recovered without explicit intervention, as evidenced by the successful response at 06:43:16 UTC. This suggests either:
+1. An automatic service restart occurred
+2. The problematic condition (null value) was temporary and resolved itself
+3. A failover to a redundant system took place
+
+## Conclusions and Recommendations
+
+### What Happened
+The EMI calculation service failed due to a null pointer exception when checking if a Credit Conversion Factor was applicable. This suggests that expected data was missing or not properly initialized in the calculation process.
+
+### Recommendations
+1. **Code Fix**: Add null checks in the `checkIfCcfApplicable` method to handle cases where expected values might be null
+2. **Logging Enhancement**: Improve logging to capture the specific object or property that was null
+3. **Input Validation**: Implement stronger validation of input parameters to ensure all required data is present
+4. **Monitoring**: Set up specific monitoring for this endpoint to detect similar failures quickly
+5. **Error Handling**: Improve error handling to provide more meaningful error messages to users when calculation cannot be completed
+
+### Next Steps
+1. Review the code at `SingleProductEmiCalculatorImpl.java:174` to identify the specific null reference
+2. Test the fix in a development environment with various input scenarios
+3. Deploy the fix with appropriate monitoring to ensure the issue is resolved
+4. Consider a broader review of null handling practices across the codebase
+
+This issue appears to be a straightforward code bug rather than an infrastructure or system-level problem, making it relatively straightforward to address once the specific null reference is identified.
+================================================================================

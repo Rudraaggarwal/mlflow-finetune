@@ -78,7 +78,21 @@ async def call_remediation_agent(
             logger.error(f"Failed to store data in Redis: {redis_error}")
             # Continue with remediation call even if Redis fails
 
-        # Prepare the remediation payload
+        # Check if this is a business-level alert to add special remediation context
+        is_business_alert = incident_data.get("is_business_alert", False)
+        has_internal_server_error = False
+
+        # Check for Internal Server Error patterns in correlation data
+        if correlation_data and isinstance(correlation_data, str):
+            internal_server_patterns = [
+                "Internal Server Error",
+                "500 Internal Server Error",
+                "Server Error",
+                "CProductValidation::ProductValidate][INFORMATION] ResponseMsg: Internal Server Error occurred"
+            ]
+            has_internal_server_error = any(pattern in correlation_data for pattern in internal_server_patterns)
+
+        # Prepare the remediation payload with business context
         remediation_payload = {
             "incident_id": incident_id,
             "incident_key": incident_data.get("incident_key", incident_id),
@@ -88,8 +102,31 @@ async def call_remediation_agent(
             "service": incident_data.get("service", "unknown"),
             "instance": incident_data.get("instance", "unknown"),
             "current_trace_id": langfuse.get_current_trace_id(),
-            "current_observation_id": langfuse.get_current_observation_id()
+            "current_observation_id": langfuse.get_current_observation_id(),
+            "is_business_alert": is_business_alert,
+            "has_internal_server_error": has_internal_server_error
         }
+
+        # Add business-specific remediation context
+        if is_business_alert:
+            remediation_payload["business_context"] = {
+                "transaction_flow": "POS → PC (C++) → ValidationInterface (DCOM) → OEM Connector (Java) → OEM (Brand)",
+                "critical_component": "OEM Connector",
+                "payload_data": incident_data.get("payload", "Not available"),
+                "vendor_notification_required": has_internal_server_error,
+                "remediation_focus": "OEM Connector endpoint failures require vendor notification"
+            }
+
+        # Add special instructions for business alerts with Internal Server Errors
+        if is_business_alert and has_internal_server_error:
+            remediation_payload["special_instructions"] = (
+                "BUSINESS CRITICAL: Internal Server Error detected in OEM Connector. "
+                "This indicates OEM endpoint failure. Remediation MUST include: "
+                "1. Immediate notification to OEM connector vendor about endpoint failures "
+                "2. Business impact assessment for transaction processing "
+                "3. Escalation to vendor support with specific error details "
+                "4. Monitoring of vendor endpoint health status"
+            )
 
         # Create A2A JSON-RPC protocol message format
         a2a_payload = {

@@ -1,0 +1,85 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+================================================================================
+**Investigation Report – OEM Service Down (PaymentController)**  
+**Alert:** OEM Service Down – PaymentController – Severity = Critical  
+**Alert Time:** 2025‑11‑10 15:11:37.4473 UTC  
+
+---
+
+### 1. Initial Assessment  
+**[RELEVANT]** – The log excerpt contains multiple entries from the *PaymentController* process that were written **seconds after** the alert fired (15:12:35 ≈ 58 seconds later). The entries include error‑type messages and configuration details that point to a failure in the downstream OEM (Pine360) integration, which is exactly what the alert is reporting.
+
+---
+
+### 2. What the Logs Show  
+
+| # | Timestamp (local) | Host / Service | Log Message (key parts) | Why it matters |
+|---|-------------------|----------------|--------------------------|----------------|
+| 1 | 15:12:35.936 | 192.168.101.148 – PaymentController | `TimeOut: 1` (logging enabled) | Shows the component started a request with a **1 ms timeout** – far too short for a remote OEM call. |
+| 2 | 15:12:35.936 | same | `MaxConnxLimit: 20` | Connection pool size is OK, but the timeout (see #1) will cause immediate failure. |
+| 3 | 15:12:35.936 | same | `TimeOut: 15000` (15 s) – set on **CPine360Interface** | The Pine360 client is configured for a 15‑second timeout, but the wrapper (PaymentController) appears to override it with the 1 ms value above. |
+| 4 | 15:12:35.936 | same | `URL: https://txnuat.pineperks.in` | Target OEM service endpoint – the service that went down. |
+| 5 | 15:12:35.920 | same | `Could Not Init Locale Info` / `Locale ID is not GOOD` | Indicates the controller could not retrieve required locale data from the OEM – a downstream failure. |
+| 6 | 15:12:35.904 | same | `RETURNED ERROR ID FOR DAY CLOSE: 1` | The OEM responded with an error code **1** (generic failure). |
+| 7 | 15:12:35.904 | same | `ProcessPrmozoneDayClose Response Code: 11 … Invalid Terminal/Store ID` | The OEM explicitly reports **“Invalid Terminal/Store ID”** – the request payload is being rejected. |
+| 8 | 15:12:35.904 | same | `ProcessPromozoneDayClose. Time Taken: 16 ms` | The whole call completed in 16 ms, far shorter than the 15 s timeout – the client gave up almost immediately (consistent with the 1 ms timeout). |
+| 9 | 15:12:35.920‑936 | same | Multiple *Tracepoint* entries (Enter/Exit) for functions such as `CPL_spGetClientHardwareFamilyName`, `CPL_spGetClientCapabilityDetails`, etc. | These show the internal workflow progressing, but they all terminate quickly because the external call fails early. |
+| 10| 15:12:35.936 | same | `*****************************************************************************` (separator) | Visual marker that a new logical block (OEM call) is starting. |
+
+**Key observations**
+
+* The **OEM endpoint** (`https://txnuat.pineperks.in`) is being contacted, but the request never gets a proper response.
+* The **client‑side timeout** is set to **1 ms** (`TimeOut: 1`), which forces the request to abort before the server can answer.  
+* The OEM service returns **error 11 – “Invalid Terminal/Store ID”**, suggesting that the payload (terminal/store identifiers) is malformed or stale.
+* Locale initialization fails (`Could Not Init Locale Info`), which is often a downstream dependency on the OEM for locale data.
+* All of these events happen **within the same second** (15:12:35), directly after the alert timestamp, confirming a tight correlation.
+
+---
+
+### 3. Investigation Summary  
+
+**Why the log entries matter**  
+The logs capture the exact moment the PaymentController attempted to talk to the Pine360 OEM service. The combination of a **mis‑configured timeout** (1 ms) and **invalid request data** (bad terminal/store ID) caused the call to abort instantly, producing the “OEM Service Down” alert.
+
+**Likely root cause**  
+
+| Potential cause | Evidence |
+|-----------------|----------|
+| **Mis‑configured client timeout** (1 ms) | Log entry `TimeOut: 1` right before the OEM call; the call completes in 16 ms, far shorter than the intended 15 s window. |
+| **Invalid terminal/store identifiers** sent to the OEM | OEM response `Invalid Terminal/Store ID` (error 11). |
+| **Locale data retrieval failure** (dependent on OEM) | `Could Not Init Locale Info` and `Locale ID is not GOOD`. |
+| **Downstream OEM service itself** – unlikely to be completely offline because it returned an error code quickly; more likely the request never reached a healthy endpoint due to the client‑side timeout. |
+
+**Impact on the system & users**  
+
+* **Payment processing** – Any transaction that required Pine360 validation (e.g., card‑present payments, loyalty integration) would have been rejected or timed‑out, leading to failed sales and a poor customer experience.
+* **Day‑close / batch jobs** – The “ProcessPrmozoneDayClose” routine failed, which could prevent end‑of‑day reconciliation and reporting.
+* **Locale‑dependent UI** – Failure to initialise locale may have caused UI fall‑backs or incorrect language/formatting for affected terminals.
+* **Cascading alerts** – The critical “OEM Service Down” alert is a symptom of the above configuration issue; fixing the timeout and payload will stop the alert from firing.
+
+**Evidence‑based conclusion**  
+
+The PaymentController attempted to call the Pine360 OEM service at **15:12:35**. Because the controller’s **timeout was set to 1 ms**, the request was aborted almost instantly, and the OEM responded with an error indicating **invalid terminal/store identifiers**. The combination of these two problems caused the service to be perceived as “down,” triggering the critical alert. The root cause is **configuration‑level** (timeout and request data), not a hard outage of the OEM endpoint.
+
+---
+
+### Recommendations (next steps)
+
+1. **Correct the timeout** – Change the `TimeOut` value from `1` to a realistic value (e.g., `15000` ms) in the PaymentController configuration.
+2. **Validate terminal/store IDs** before sending the request; add a sanity check or fallback to a known‑good mapping.
+3. **Add retry logic** – If the OEM returns error 11, log the payload and retry after a short back‑off, rather than immediately failing the whole transaction.
+4. **Monitor locale initialization** – Ensure locale data is cached or retrieved with a separate, tolerant timeout to avoid cascading failures.
+5. **Deploy a quick health‑check** – A lightweight endpoint that verifies connectivity to `https://txnuat.pineperks.in` can surface connectivity issues before they affect payment flows.
+
+---
+
+**Bottom line:** The logs are **directly relevant** and clearly point to a mis‑configured client timeout and malformed request data as the cause of the “OEM Service Down” alert. Fixing those settings should restore normal payment processing and stop the critical alerts.
+================================================================================

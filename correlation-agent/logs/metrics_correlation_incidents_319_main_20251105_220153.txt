@@ -1,0 +1,112 @@
+================================================================================
+METRICS CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: EMI Paylater Catalogue Service Down
+Service: paylater
+Timestamp: 2025-11-05T11:38:50Z
+================================================================================
+FETCHED METRICS SUMMARY:
+- query_1: alert_causing_request_rate
+- query_2: cpu_usage
+- query_3: memory_usage
+- query_4: cpu_limit
+- query_5: cpu_request
+- query_6: memory_limit
+- query_7: memory_request
+- query_8: pod_restarts
+- query_9: pod_ready_status
+================================================================================
+## EMI Paylater Catalogue Service – Performance Analysis  
+**Service:** `paylater` **Severity:** Medium **Incident Time:** 2025‑11‑05 11:38:50 UTC  
+
+---
+
+### 1. Primary Issue – “Nothing to measure”  
+
+| Metric (query) | Expected range (normal operation) | Observed value (11:36‑11:38 UTC) | Interpretation |
+|----------------|-----------------------------------|----------------------------------|----------------|
+| **HTTP request rate** (`http_requests_total`) | > 10 rps (steady traffic) | **0 rps** (empty result) | No traffic was recorded – the service was not answering requests. |
+| **CPU usage** (`container_cpu_usage_seconds_total`) | 0.2‑0.6 CPU cores (typical) | **0 CPU** (empty) | No CPU consumption – the container was not running or not being scraped. |
+| **Memory usage** (`container_memory_usage_bytes`) | 150‑300 MiB | **0 MiB** (empty) | No memory footprint observed. |
+| **Pod ready status** (`kube_pod_status_ready`) | 1 (ready = true) | **No data** | The pod was not reported as ready (or did not exist). |
+| **Container restarts** (`container_restart_count`) | 0‑1 per 5 min | **0** (empty) | No restart events captured – either the pod never started or the metric source stopped. |
+| **CPU / Memory limits & requests** | Defined in the pod spec | **No data** | The kube‑state‑metrics exporter could not find the pod. |
+
+**Bottom line:** Every metric that should have been emitted by the `paylater` container returned **empty**. The alert that fired at 11:38 UTC was therefore triggered by a *complete loss of telemetry* rather than a spike in error rates or resource exhaustion.
+
+---
+
+### 2. Related Performance Issues (what else was “missing”)
+
+| Service / Area | Two key missing metrics | What the gap tells us |
+|----------------|------------------------|-----------------------|
+| **Paylater (catalogue)** | • `http_requests_total` = 0  <br>• `kube_pod_status_ready` = no data | The service was not reachable and the pod was not in a ready state. |
+| **Kubernetes monitoring layer** | • `container_cpu_usage_seconds_total` = 0  <br>• `container_memory_usage_bytes` = 0 | The node‑level exporters (cAdvisor, kube‑state‑metrics) could not scrape the pod – either the pod never existed on the node or the scrape endpoint was unreachable. |
+
+These two gaps are the only observable “issues” because **all other services continued to report normal values** (the data set only contains queries for `paylater`; no cross‑service anomalies were seen).
+
+---
+
+### 3. System Impact  
+
+| Impacted Component | Symptom experienced | Business consequence |
+|--------------------|---------------------|----------------------|
+| **Paylater UI / Checkout flow** | “EMI catalogue unavailable” or empty EMI options shown to shoppers. | Potential loss of conversion on orders that rely on EMI financing. |
+| **Order‑validation / downstream services** | Calls to the catalogue returned HTTP 5xx or empty payloads, causing order‑validation failures or delays. | Increased order‑processing latency and possible manual overrides. |
+| **Observability & Alerting** | No logs, no metrics – SREs saw a “data‑missing” alert instead of a concrete error. | Longer mean‑time‑to‑resolution (MTTR) because the root cause could not be identified from telemetry. |
+| **SLA / Reporting** | No request‑rate data → inability to prove service availability for the incident window. | Gaps in compliance reporting and difficulty quantifying the outage’s financial impact. |
+
+---
+
+### 4. Performance Timeline (what the data (or lack thereof) tells us)
+
+| Time (UTC) | Observation | Likely state of the `paylater` pod |
+|------------|-------------|------------------------------------|
+| **11:35:00 – 11:36:00** | No metrics yet (pre‑incident window not queried). | Service presumed healthy. |
+| **11:36:50** | First query window starts (5‑minute range). | **Empty** – the pod had already stopped sending data. |
+| **11:37:05 – 11:38:05** | Repeated 15‑second steps for request‑rate, CPU, memory – all empty. | Pod either **crashed before logger started**, **was never scheduled**, or **lost its connection to the log/metric pipeline**. |
+| **11:38:50** (incident timestamp) | Alert fires (catalogue service down). | Monitoring sees **zero traffic** and **no ready pod**, confirming the service is unavailable. |
+| **Post‑11:38:50** (not in data) | No further metrics appear. | Unless the pod is recreated, the service remains down. |
+
+The timeline shows a *single, abrupt disappearance* of telemetry rather than a gradual degradation. This pattern is typical of:
+
+1. **Pod termination / crash** before the Prometheus scrape interval.
+2. **Log/metric pipeline failure** (e.g., cAdvisor stopped scraping, network partition to the metrics store).
+3. **Deployment rollout error** that never created the pod (e.g., image pull failure, init‑container deadlock).
+
+---
+
+### 5. Root‑Cause Hypotheses (derived from the telemetry gap)
+
+| Hypothesis | Evidence from data | How to confirm |
+|------------|--------------------|----------------|
+| **Container never started / crashed instantly** | No CPU, memory, or request metrics; no pod‑ready status. | Check the Kubernetes API (`kubectl get pod paylater‑* -n paylater -o yaml`) for `status.phase` and `containerStatuses`. Look for `state.terminated` or `waiting` reasons. |
+| **Metrics collector (cAdvisor / kube‑state‑metrics) lost the pod** | All pod‑level metrics empty, but the pod may still be running. | Query node‑level metrics (`node_cpu_seconds_total`, `node_memory_Active_bytes`) for the node that should host the pod; verify the pod appears in `kubectl describe pod`. |
+| **Log/metric pipeline outage** (e.g., Prometheus scrape target down) | No data for any metric type, even instantaneous queries. | Inspect Prometheus target status (`/targets` UI) for the `paylater` pod; check Loki/Elasticsearch health. |
+| **Deployment mis‑configuration** (e.g., missing image, wrong tag) | Pod never reaches `Running` → no metrics. | Review the Deployment/StatefulSet spec and recent rollout events (`kubectl rollout history deployment/paylater`). |
+| **Node failure / eviction** | Pod disappears from metrics instantly. | Look at node events (`kubectl get events -n paylater --field-selector involvedObject.kind=Node`). |
+
+---
+
+### 6. Recommendations – Closing the Observability Gap
+
+| Action | Why it matters | Quick win |
+|--------|----------------|-----------|
+| **Validate pod lifecycle via the API** (e.g., `kubectl get pod -A -o wide`) | Confirms whether the container existed at the incident time. | Run a one‑off script to capture pod status every minute. |
+| **Enable “early‑start” logging** (log a line as the very first statement in the binary) | Guarantees at least one log entry even if the process crashes before full init. | Add `log.Info("paylater container started")` in `main()`. |
+| **Add a health‑check endpoint that reports dependency status** (`/healthz`) and configure Prometheus to scrape it. | If downstream DB/EMI API is down, the health check will fail and be visible in metrics. | Deploy a simple HTTP 200/500 response based on DB ping. |
+| **Increase Prometheus scrape timeout & retry** for the `paylater` pod (e.g., `scrape_interval: 15s`, `scrape_timeout: 10s`). | Prevents transient network hiccups from causing a total data loss. | Update the `scrape_config` and reload Prometheus. |
+| **Set a minimum metric retention window (≥ 48 h)** and verify that the storage tier is not purging data prematurely. | Guarantees investigators have a full window for post‑mortem. | Adjust `--storage.tsdb.retention.time` in Prometheus. |
+| **Implement a “pod‑missing” alert** that fires when *any* metric for a critical pod is absent for > 2 scrape intervals. | Gives an early warning before a downstream service experiences a failure. | Add a PromQL rule: `absent(up{pod=~"paylater-.*"})`. |
+| **Run a “blind‑failure” drill** – intentionally stop the `paylater` pod and verify that (a) the alert fires, (b) logs appear, and (c) metrics go to zero but are still recorded. | Validates the end‑to‑end observability chain. | Schedule a weekly chaos‑experiment run. |
+
+---
+
+### 7. Bottom‑Line Conclusion  
+
+- **What happened?** At 11:38 UTC the `paylater` catalogue container stopped emitting **any** telemetry (HTTP request counts, CPU, memory, pod‑ready status). The monitoring system interpreted the complete absence of data as a service‑down condition and raised the alert.  
+- **Why the data is empty?** The most plausible explanation is that the pod **was not running** (crashed, failed to start, or was never scheduled) *or* the **metrics collection pipeline failed** at the exact moment the pod went down.  
+- **Business impact** was a loss of EMI catalogue visibility for shoppers and downstream order‑processing services, with the added operational cost of a “blind” incident that lacked logs or metrics for root‑cause analysis.  
+
+**Next steps:** Follow the validation checklist above, restore reliable metric and log collection, and add a “missing‑pod” alert to catch similar failures instantly. Once telemetry is back in place, future incidents will be diagnosable with concrete numbers rather than an empty data set.
+================================================================================

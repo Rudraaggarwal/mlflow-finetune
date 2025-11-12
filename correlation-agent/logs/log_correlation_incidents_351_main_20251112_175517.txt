@@ -1,0 +1,56 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+================================================================================
+# Investigation Report: OEM Service Down - PaymentController
+
+## Initial Assessment: RELEVANT
+
+## What the Logs Show:
+
+### Thread [152492] Analysis:
+
+The logs reveal a series of failures in thread 152492 for client ID 2796506, which directly corresponds to the reported OEM Service Down issue. The PaymentController service experienced multiple failures during payment processing attempts.
+
+#### Timeline for Thread 152492:
+- **15:12:37.215**: Multiple instances of "QSparc Offline on Device" errors
+- **15:12:35.305**: Additional QSparc offline parameter download failures
+- **15:12:32.474**: Continued QSparc offline parameter download failures
+- **15:12:32.458**: "MST details not found or fetch failed" error with "REDEMPTION NOT ALLOWED" message
+- **15:12:32.364**: Multiple MST detail fetch failures for different ID types
+- **15:12:32.317**: **FATAL ERROR** in ClientInfo::GetClientDetails with memory size mismatch (DestinationSize[3] SourceSize[11])
+
+#### Errors in Thread 152492:
+1. **Memory allocation error**: A critical "FATAL ERROR" in the ClientInfo::GetClientDetails function shows a memory size mismatch
+2. **QSparc offline errors**: Repeated failures in the bFnHandleQSparcOfflineParameterDownload function
+3. **MST detail retrieval failures**: Multiple instances of "MST details not found or fetch failed"
+4. **Redemption rejection**: Transaction state error with "REDEMPTION NOT ALLOWED" message
+
+#### Impact of Thread 152492:
+This thread shows the complete transaction failure path that led to the OEM service outage. The memory allocation error appears to have triggered a cascade of failures in the payment processing pipeline, preventing the service from functioning properly.
+
+### Client Data Analysis:
+The client data shows repeated "PRODUCT VALIDATION CALL FAILED" errors for client ID 2796506 starting at 15:08:44 and continuing through 15:13:28, aligning perfectly with the thread logs. This indicates persistent validation failures over approximately 5 minutes.
+
+## Investigation Summary:
+
+The PaymentController service outage was caused by a critical memory allocation error in the ClientInfo::GetClientDetails function. This error occurred when the system attempted to copy data of size 11 into a destination buffer of size 3, causing a buffer overflow condition.
+
+This initial memory error triggered a cascade of failures:
+
+1. The memory error prevented proper client information retrieval
+2. Without valid client details, the MST (Master Service Table) lookups failed for multiple ID types
+3. These failures prevented the QSparc offline parameter download from completing
+4. The transaction was ultimately rejected with "REDEMPTION NOT ALLOWED"
+
+The client database records confirm that product validation calls repeatedly failed during this time period, indicating that the issue persisted for at least 5 minutes and affected all payment processing attempts for client 2796506.
+
+### Thread 152492 Conclusion:
+The root cause appears to be a buffer size mismatch in the ClientInfo::GetClientDetails function, where the system attempted to copy 11 bytes of data into a 3-byte buffer. This memory allocation error caused the entire payment processing pipeline to fail, resulting in the OEM service outage. The repeated nature of the errors suggests this was not a transient issue but a fundamental problem with how client data was being handled for this specific client ID.
+================================================================================

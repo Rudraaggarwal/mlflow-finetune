@@ -1,0 +1,86 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+- phase_2_PaymentController: N/A entries
+- phase_3_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs contain clear evidence related to the reported issue with the PaymentController service and specifically show failures for client ID 2796506 at the exact time of the reported incident (2025-11-10 15:11:37.4473).
+
+## What the Logs Show
+
+### Key Error Pattern Identified
+The logs reveal a consistent pattern of failures for client ID 2796506, which matches our database records showing "PRODUCT VALIDATION CALL FAILED" errors. The most relevant log entries show:
+
+```
+2025-11-10 15:12:35,305 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+
+2025-11-10 15:12:32,474 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+
+2025-11-10 15:12:32,458 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+```
+
+### Critical Memory Error
+A particularly concerning error was found that likely contributed to the issue:
+
+```
+2025-11-10 15:12:32,317 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][SecureMemCpy][INFORMATION] FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]
+```
+
+This indicates a memory buffer issue in the `ClientInfo::GetClientDetails` function, where the system attempted to copy 11 bytes of data into a 3-byte destination buffer, likely causing memory corruption.
+
+### Multiple MST Fetch Failures
+The logs show multiple failures to retrieve MST (Master System Table) details for different entity types:
+
+```
+2025-11-10 15:12:32,364 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]
+
+2025-11-10 15:12:32,364 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [2], ID [0]
+
+2025-11-10 15:12:32,364 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [1], ID [2015]
+```
+
+### Transaction Rejection
+The system responded to these failures by rejecting the transaction with an error message:
+
+```
+PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+```
+
+## Investigation Summary
+
+### Root Cause Analysis
+The primary issue appears to be a **memory buffer overflow** in the `ClientInfo::GetClientDetails` function, which likely corrupted data needed for client validation. This memory error occurred in thread 152492, which is one of the threads associated with client ID 2796506 in our database records.
+
+The memory error led to cascading failures:
+1. The system couldn't properly retrieve client information
+2. This caused MST (Master System Table) lookup failures for multiple entity types
+3. The QSparc offline parameter download process failed repeatedly
+4. The system ultimately rejected transactions with "REDEMPTION NOT ALLOWED" errors
+
+### System Impact
+1. **Client Impact**: Client ID 2796506 experienced repeated transaction failures over a period of at least 5 minutes (from 15:08:44 to 15:13:28 according to database records)
+2. **Service Degradation**: The PaymentController service was unable to process transactions for this client
+3. **Error Propagation**: The memory corruption may have affected other system components, though the logs don't show widespread impact beyond this client
+
+### Connection to OEM Service Down Alert
+The "OEM Service Down" alert appears to be directly related to the QSparc offline functionality failing. The logs specifically mention "QSparc Offline on Device" in conjunction with the failures. This suggests that the payment terminal's ability to process offline transactions was compromised, likely due to the memory corruption preventing proper client validation.
+
+## Recommendations
+
+1. **Immediate Action**: Investigate and fix the memory buffer issue in the `ClientInfo::GetClientDetails` function, ensuring proper buffer size allocation
+2. **Code Review**: Examine other instances of memory management in the PaymentController service for similar vulnerabilities
+3. **Client Follow-up**: Contact client ID 2796506 to verify if service has been restored and offer any necessary compensation
+4. **Monitoring Enhancement**: Implement specific monitoring for memory-related errors to catch these issues before they impact clients
+
+The evidence strongly suggests that a memory buffer overflow was the root cause of the OEM Service Down alert, affecting client ID 2796506's ability to process payments through the QSparc offline functionality.
+================================================================================

@@ -1,0 +1,83 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: Logs Error Spike
+Service: paylater
+Timestamp: 2025-11-05T06:22:32Z
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_paylater: N/A entries
+- phase_2_paylater: N/A entries
+- phase_3_paylater: N/A entries
+- phase_4_paylater: N/A entries
+================================================================================
+# PayLater Error Spike Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs show clear evidence of errors that explain the spike reported on November 5, 2025, at 06:22:32Z. Two distinct issues were identified in the PayLater ecosystem.
+
+## What the Logs Show
+
+### Issue 1: OEM Connector Validation Error (06:20:30Z)
+The OEM connector service encountered a client-side validation error when processing a request from Lenovo:
+
+```
+Error: {
+  "name": "INVALID_REQUEST",
+  "message": "Request is not well-formed, syntactically incorrect, or violates schema",
+  "debugId": "365BD1771E620CBEAEC578A202DDE7A7",
+  "details": [{
+    "location": "body",
+    "field": "merchant.state_code",
+    "issue": "MISSING_REQUIRED_PARAMETER",
+    "description": "The value of a required field is missing.",
+    "value": ""
+  }]
+}
+```
+
+This was a 400 Bad Request error where a required field (`merchant.state_code`) was missing in the request to the `/v1/oem/product-validate` endpoint.
+
+### Issue 2: Catalogue Service NullPointerException (06:18:10Z)
+The catalogue service experienced a more severe internal server error when calculating EMI options:
+
+```
+java.lang.NullPointerException
+at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.checkIfCcfApplicable(SingleProductEmiCalculatorImpl.java:174)
+```
+
+This error occurred in the EMI calculation logic and resulted in a 500 Internal Server Error response to clients using a POS_LANDI device. The error happened when processing a POST request to `/v1/catalogue/calculate-emi`.
+
+## Investigation Summary
+
+### Root Causes
+
+1. **OEM Connector Issue**: This appears to be a data validation problem. The Lenovo integration is sending requests without the required `merchant.state_code` field. While this generates errors, the system is correctly validating the input and returning appropriate error responses (HTTP 400).
+
+2. **Catalogue Service Issue**: This is more concerning as it represents an actual application bug. The `NullPointerException` in the EMI calculator indicates the code is trying to access a property of a null object at line 174 of `SingleProductEmiCalculatorImpl.java`. This results in HTTP 500 errors being returned to users.
+
+### Impact Assessment
+
+- **User Experience**: Customers using POS_LANDI devices would have been unable to calculate EMI options, potentially blocking sales transactions.
+  
+- **Business Impact**: The EMI calculation feature is likely critical for completing purchases, so this error could directly impact revenue.
+
+- **System Health**: While the OEM connector is correctly handling validation errors, the catalogue service is experiencing unhandled exceptions that could potentially affect system stability.
+
+### Timeline Correlation
+
+The error spike reported at 06:22:32Z aligns with the timeframe of both errors (06:18-06:20), suggesting these issues contributed to the reported spike.
+
+## Recommendations
+
+1. **Immediate Fix**: Address the NullPointerException in the `SingleProductEmiCalculatorImpl.checkIfCcfApplicable` method by implementing proper null checks.
+
+2. **Data Validation**: Work with the Lenovo integration team to ensure they include the required `merchant.state_code` field in all product validation requests.
+
+3. **Error Handling**: Improve error handling in the catalogue service to prevent uncaught exceptions from resulting in 500 errors.
+
+4. **Monitoring**: Set up specific alerts for NullPointerExceptions in the catalogue service to catch similar issues earlier.
+
+This investigation confirms that the error spike was caused by legitimate application issues that require developer attention, particularly the NullPointerException in the EMI calculator component.
+================================================================================

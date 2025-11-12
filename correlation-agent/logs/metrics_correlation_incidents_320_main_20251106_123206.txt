@@ -1,0 +1,89 @@
+================================================================================
+METRICS CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: EMI Paylater Catalogue Service Down
+Service: paylater
+Timestamp: 2025-11-06T06:38:50Z
+================================================================================
+FETCHED METRICS SUMMARY:
+- query_1: alert_causing
+- query_2: error_rate
+- query_3: memory_usage
+- query_4: cpu_usage
+- query_5: memory_limits
+- query_6: cpu_limits
+- query_7: request_rate
+- query_8: jvm_memory
+- query_9: pod_restarts
+================================================================================
+# EMI Paylater Catalogue Service Performance Analysis
+
+## Primary Issue
+The EMI Paylater Catalogue Service experienced a service disruption on November 6, 2025, starting at approximately 06:38:50 UTC. The root cause was identified as a null pointer exception in the EMI calculation functionality, specifically in the `SingleProductEmiCalculatorImpl.checkIfCcfApplicable()` method. This caused the service to return 500 Internal Server Error responses when users attempted to use the `/v1/catalogue/calculate-emi` endpoint.
+
+## Related Performance Issues
+
+### Resource Utilization
+1. **Memory Usage**: The memory usage remained stable throughout the incident period:
+   - UAT namespace: 876.5 MB (27.2% of the 3.2 GB limit)
+   - SIT namespace: 563.5 MB (26.2% of the 2.1 GB limit)
+
+2. **CPU Usage**: CPU utilization was extremely low during the incident:
+   - Average: 0.003 cores (0.3% of the 1.024 core limit)
+   - Peak: 0.0055 cores (0.54% of the limit) at 06:39:30 UTC
+
+This indicates that the issue was not resource-related, as both CPU and memory were well below their limits and showed no unusual patterns during the incident.
+
+### Container and Pod Health
+1. **Pod Availability**: The deployment maintained 1 available replica throughout the incident in both namespaces (paylater and paylater-sit).
+
+2. **Container Restarts**: No container restarts were observed during the incident period, with restart counts remaining at 0 for both namespaces.
+
+This suggests that the Kubernetes infrastructure was functioning properly, and the issue was contained within the application code rather than being an infrastructure or resource problem.
+
+## System Impact
+The service disruption affected users attempting to calculate EMI options for purchases. When users tried to access the EMI calculation functionality, they received 500 Internal Server Error responses instead of the expected EMI calculation results. This would have prevented them from:
+
+1. Viewing available EMI options for their purchases
+2. Seeing interest rates from different banks (e.g., HDFC Debit Card's 11.0% rate)
+3. Comparing monthly payment amounts across different tenure options
+4. Completing transactions using the EMI payment option
+
+The issue appears to have lasted approximately 4-5 minutes, from 06:38:50 UTC to around 06:43:16 UTC when successful responses were observed again.
+
+## Performance Timeline
+
+1. **06:38:50 UTC**: Issue begins (based on alert time)
+2. **06:39:50 UTC**: First logged error showing 500 response with null pointer exception
+3. **06:39:30 UTC**: Slight CPU usage spike to 0.0055 cores (still very low overall)
+4. **06:42:40 UTC**: Last observed error with the same pattern
+5. **06:43:16 UTC**: Service recovery observed with successful 200 response
+
+Throughout this timeline, system resources remained stable with no significant changes in memory usage or container health. The CPU usage showed minimal fluctuation but remained well below capacity limits.
+
+## Conclusion
+
+The performance data confirms that this was a pure application code issue rather than a system resource or infrastructure problem:
+
+1. **Root Cause**: A null pointer exception in the `SingleProductEmiCalculatorImpl.checkIfCcfApplicable()` method at line 174 caused the service to fail when processing EMI calculation requests.
+
+2. **Not Resource-Related**: Both memory (27% utilized) and CPU (0.3% utilized) had ample headroom, ruling out resource constraints as a factor.
+
+3. **Infrastructure Stability**: No pod restarts or availability issues were detected, indicating stable infrastructure.
+
+4. **Self-Recovery**: The service appears to have recovered without explicit intervention, as evidenced by the successful response at 06:43:16 UTC without any container restarts.
+
+## Recommendations
+
+1. **Code Fix**: Add null checks in the `checkIfCcfApplicable` method to handle cases where expected values might be null.
+
+2. **Error Handling**: Implement more robust error handling to prevent null pointer exceptions from causing service disruptions.
+
+3. **Monitoring Enhancement**: Set up specific monitoring for the `/v1/catalogue/calculate-emi` endpoint to detect similar failures quickly, as the current metrics didn't capture the HTTP 500 errors in the monitoring system.
+
+4. **Logging Improvement**: Ensure that application errors are properly captured in metrics to improve visibility into service health.
+
+5. **Testing**: Implement more comprehensive testing scenarios that include edge cases with potentially null values in the EMI calculation flow.
+
+This incident highlights the importance of defensive programming practices when dealing with potentially null values, especially in critical business logic like payment processing.
+================================================================================

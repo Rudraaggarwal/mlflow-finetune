@@ -1,0 +1,112 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+- phase_2_PaymentController: N/A entries
+- phase_3_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## 1. Initial Assessment: RELEVANT
+
+The logs provide clear evidence of the issue affecting the PaymentController service, specifically related to client ID 2796506 and thread ID 152492.
+
+## 2. What the Logs Show
+
+### Key Error Pattern
+The logs reveal a consistent pattern of product validation failures for client ID 2796506, occurring repeatedly between 15:08:44 and 15:13:28 on November 10, 2025:
+
+```
+CLIENT_ID,PRODUCT_VALIDATION_ERROR_MESSAGE,ROW_INSERTION_DATE_TIME
+2796506,PRODUCT VALIDATION CALL FAILED,2025-11-10 15:13:28.607000
+2796506,PRODUCT VALIDATION CALL FAILED,2025-11-10 15:12:52.940000
+2796506,PRODUCT VALIDATION CALL FAILED,2025-11-10 15:12:11.020000
+2796506,PRODUCT VALIDATION CALL FAILED,2025-11-10 15:11:37.447000
+...
+```
+
+### Critical Error Details
+The PaymentController logs for thread ID 152492 show:
+
+1. **QSparc Offline Errors** (15:12:37):
+   ```
+   2025-11-10 15:12:37,215 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+   ```
+
+2. **MST Details Fetch Failures** (15:12:32):
+   ```
+   2025-11-10 15:12:32,458 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]PerformAddonTxn Sending MiniPVM ErrorId[0] Message[REDEMPTION NOT ALLOWED] TxnState[2]iTxnType[5384]
+   ```
+
+3. **Memory Allocation Errors** (15:12:32):
+   ```
+   2025-11-10 15:12:32,317 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][SecureMemCpy][INFORMATION] FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]
+   ```
+
+### Additional System Issues
+The logs also show broader system problems:
+
+1. **Database Connection Failures**:
+   ```
+   2025-11-10 15:15:10,379 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 157952][CFallbackStatusThread::vFnProcessFallbackStatus][INFORMATION] [LINE:212] spGetBankFallbackInfoFromDB FAILED !!!
+   ```
+
+2. **TLV Object Formation Failures**:
+   ```
+   *****FATAL FAILED TO FORM TLV OBJECT *************Max Iteration Count = 13
+   ```
+
+## 3. Investigation Summary
+
+### Root Cause Analysis
+The primary issue appears to be a failure in the OEM service that handles product validation. This is evidenced by:
+
+1. **Consistent Product Validation Failures**: Client ID 2796506 experienced 8 consecutive product validation failures over a 5-minute period.
+
+2. **QSparc Offline Status**: The logs indicate the QSparc system (likely a payment processing component) was offline, preventing parameter downloads required for transaction processing.
+
+3. **Memory Allocation Issues**: The `SecureMemCpy` errors suggest memory buffer problems when handling client details, where the destination buffer (size 3) was too small for the source data (size 11).
+
+4. **MST Details Fetch Failures**: Multiple failures to retrieve master transaction details for different entity types, including client ID 2796506.
+
+### Impact Assessment
+The service disruption had the following impacts:
+
+1. **Transaction Processing**: Client 2796506 was unable to process transactions, with the system returning "REDEMPTION NOT ALLOWED" errors.
+
+2. **Cascading Failures**: The initial product validation failures led to downstream issues with transaction processing and parameter downloads.
+
+3. **System Stability**: The memory allocation errors indicate potential system instability that could affect other clients beyond the one identified in the logs.
+
+### Conclusions
+
+Based on the evidence, we can conclude that:
+
+1. The OEM service outage began at approximately 15:08:44 on November 10, 2025, affecting the PaymentController's ability to validate products.
+
+2. The root cause appears to be a combination of:
+   - QSparc system being offline
+   - Memory allocation issues in the ClientInfo::GetClientDetails function
+   - Database connectivity problems affecting MST detail retrieval
+
+3. The system attempted to handle the failures by falling back to offline processing modes, but these attempts were unsuccessful, resulting in repeated error messages and transaction rejections.
+
+4. The timing of the errors aligns perfectly with the reported incident time (15:11:37), confirming this is the correct issue being investigated.
+
+## Recommendations
+
+1. **Immediate Action**: Restore connectivity to the QSparc system and verify its operational status.
+
+2. **Code Review**: Address the memory allocation issue in the ClientInfo::GetClientDetails function, ensuring proper buffer sizing.
+
+3. **Database Connectivity**: Investigate and resolve the database connection issues affecting MST detail retrieval.
+
+4. **Error Handling**: Improve the system's ability to gracefully handle offline scenarios to prevent cascading failures.
+
+5. **Monitoring**: Implement additional monitoring for the QSparc system to provide earlier detection of offline states.
+================================================================================

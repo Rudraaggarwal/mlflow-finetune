@@ -1,0 +1,82 @@
+================================================================================
+METRICS CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: Logs Error Spike
+Service: paylater
+Timestamp: 2025-11-05T06:22:32Z
+================================================================================
+FETCHED METRICS SUMMARY:
+- query_2: http_errors
+- query_3: cpu_usage
+- query_4: memory_usage
+- query_5: request_rate
+- query_6: jvm_memory
+================================================================================
+# PayLater Error Spike Performance Analysis Report
+
+## Primary Issue
+
+The performance data shows no HTTP error metrics during the incident timeframe (2025-11-05T06:20:00Z to 2025-11-05T06:22:32Z), despite the previous investigation identifying two distinct error types:
+
+1. OEM Connector validation errors (400 Bad Request)
+2. Catalogue Service NullPointerException errors (500 Internal Server Error)
+
+This suggests that while errors were logged, they may have occurred at a rate too low to register in the metrics collection interval, or there may be a gap in error metric instrumentation for these specific services.
+
+## Related Performance Issues
+
+### CPU Usage
+- **Catalogue Service**: CPU usage showed a notable spike to 0.00356 CPU cores at 06:21:30Z (50% increase from baseline of ~0.0024 cores), which aligns with the reported error timeframe.
+- **OEM Connector**: CPU usage increased to 0.00131 cores at 06:21:45Z (66% higher than its lowest point of 0.00079 cores), indicating increased processing activity during the error period.
+
+### Memory Usage
+- **Catalogue Service**: Memory usage remained stable at approximately 825.68 MB throughout the incident, with only minimal fluctuations (< 0.1 MB).
+- **OEM Connector**: Memory usage was stable at around 291.08 MB, showing no significant changes during the incident period.
+
+## System Impact
+
+The performance data reveals several important insights:
+
+1. **Limited Resource Impact**: Despite the logged errors, neither service experienced resource exhaustion. Memory usage remained flat, and CPU usage, while showing spikes, remained well below concerning levels (both services using less than 0.4% of a CPU core).
+
+2. **Missing Request Rate Data**: The query for HTTP request rates returned empty results, preventing us from correlating error rates with overall traffic patterns. This is a monitoring gap that should be addressed.
+
+3. **Missing JVM Metrics**: JVM memory metrics are also unavailable, which would have been valuable to determine if garbage collection or heap pressure contributed to the NullPointerException in the Catalogue Service.
+
+## Performance Timeline
+
+06:20:00Z - 06:20:15Z:
+- Baseline CPU usage: Catalogue Service (~0.0024 cores), OEM Connector (~0.0008 cores)
+- Memory usage stable for both services
+
+06:20:30Z - 06:21:30Z:
+- Catalogue Service CPU increases by 50% to 0.00356 cores
+- OEM Connector begins gradual CPU increase
+
+06:21:45Z:
+- OEM Connector reaches peak CPU usage of 0.00131 cores (66% above baseline)
+- Memory usage remains stable across both services
+
+06:22:00Z - 06:22:32Z:
+- CPU usage for both services begins to normalize toward baseline levels
+- No observable memory impact throughout the incident
+
+## Conclusions and Recommendations
+
+1. **Resource Utilization Not the Root Cause**: The performance data shows that neither CPU exhaustion nor memory pressure was the root cause of the errors. Both services maintained stable resource utilization throughout the incident.
+
+2. **Monitoring Gaps**: Critical metrics are missing from our monitoring:
+   - HTTP error rates are not being captured effectively
+   - Request rates for key endpoints are not available
+   - JVM metrics are not being collected or are not properly configured
+
+3. **Correlation with Investigation Findings**: The CPU spike in the Catalogue Service aligns with the timing of the NullPointerException identified in the previous investigation, suggesting increased processing load when handling the error conditions.
+
+4. **Recommended Actions**:
+   - Enhance monitoring to capture HTTP error rates, request rates, and JVM metrics
+   - Implement proper null checks in the `SingleProductEmiCalculatorImpl.checkIfCcfApplicable` method (line 174)
+   - Add alerting on 5xx errors specifically for critical endpoints like `/v1/catalogue/calculate-emi`
+   - Review request validation in the OEM Connector to provide better error handling for missing fields
+
+The performance data confirms this was primarily a code-level issue (NullPointerException) rather than a resource constraint or infrastructure problem, aligning with the previous investigation's findings.
+================================================================================

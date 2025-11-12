@@ -1,0 +1,75 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+- phase_2_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs provide clear evidence of the issue affecting the PaymentController service, with direct correlation to the reported client ID and thread IDs.
+
+## What the Logs Show
+
+### Key Error Patterns
+
+1. **QSparc Offline Errors**
+   - Multiple failures in the `bFnHandleQSparcOfflineParameterDownload` function
+   - Example: `2025-11-10 15:12:37,215 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed`
+   - These errors occurred repeatedly between 15:12:32 and 15:12:37
+
+2. **MST Details Fetch Failures**
+   - Multiple instances of missing or failed MST detail retrieval
+   - Example: `2025-11-10 15:12:32,458 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152492][CSubSystemHandler::DoTransaction][INFORMATION] MST details not found or fetch failed for Type [3], ID [2796506]`
+
+3. **Memory Allocation Errors**
+   - Critical memory handling issues in the client details retrieval
+   - Example: `2025-11-10 15:12:32,317 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152492][SecureMemCpy][INFORMATION] FATAL ERROR Calling Function[ClientInfo::GetClientDetails] DestinationSize[3] SourceSize[11]`
+   - This error appears repeatedly across multiple threads
+
+4. **Database Connection Issues**
+   - Failures in the fallback status processing
+   - Example: `2025-11-10 15:15:10,379 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 157952][CFallbackStatusThread::vFnProcessFallbackStatus][INFORMATION] [LINE:212] spGetBankFallbackInfoFromDB FAILED !!!`
+   - Associated with OLE DB errors (error code 0x80040E14)
+
+### Timeline of Events
+
+- **15:11:37**: Initial product validation failure recorded in the database for client ID 2796506
+- **15:12:32 - 15:12:37**: Multiple QSparc offline errors for thread ID 152492
+- **15:12:32**: MST details fetch failures and memory allocation errors
+- **15:15:10 - 15:15:32**: Continued system-wide errors including database connection issues and memory allocation problems
+
+## Investigation Summary
+
+The PaymentController service outage appears to have been triggered by a combination of factors:
+
+1. **Primary Issue**: The QSparc payment processing component went offline, causing the `bFnHandleQSparcOfflineParameterDownload` function to fail repeatedly. This directly correlates with the client ID 2796506 and thread ID 152492 identified in the alert.
+
+2. **Contributing Factors**:
+   - **Memory Allocation Problems**: The `SecureMemCpy` function consistently reported fatal errors when trying to handle client details, with a size mismatch (destination size 3, source size 11). This suggests a buffer overflow risk or memory corruption issue.
+   
+   - **Database Connectivity**: The system experienced OLE DB errors when trying to access fallback information, indicating database connectivity or query execution problems.
+
+3. **Impact Chain**:
+   - The QSparc offline condition prevented normal payment processing
+   - This triggered product validation failures (as seen in the database records)
+   - The system attempted to use fallback mechanisms, which also failed
+   - Memory allocation errors compounded the problem, potentially causing instability
+
+4. **Client Impact**: Client ID 2796506 experienced at least 7 consecutive product validation failures between 15:08 and 15:13, indicating persistent issues with their payment processing attempts.
+
+The combination of the QSparc component being offline and the inability to properly handle fallback scenarios resulted in the complete service outage. The memory allocation errors suggest there may be underlying code issues that need to be addressed to prevent similar failures in the future.
+
+## Recommended Next Steps
+
+1. Investigate the cause of the QSparc offline condition
+2. Review the memory allocation in the ClientInfo::GetClientDetails function
+3. Check database connectivity and query performance for the fallback status processing
+4. Verify if other clients were affected beyond the identified client ID 2796506
+================================================================================

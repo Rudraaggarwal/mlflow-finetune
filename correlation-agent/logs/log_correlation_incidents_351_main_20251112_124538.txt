@@ -1,0 +1,69 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_2_PaymentController: N/A entries
+- phase_1_PaymentController: N/A entries
+================================================================================
+**Investigation Report – PaymentController (OEM Service Down)**  
+
+---
+
+### 1. Initial Assessment  
+**[NOT RELEVANT]** – The log set supplied does **not** contain any entries that reference the failing client ID **2796506** or the “PRODUCT VALIDATION CALL FAILED” messages that appear in the database audit rows. Consequently the logs cannot be directly tied to the specific product‑validation failures reported by the alert.
+
+---
+
+### 2. What the Logs Show  
+
+| Timestamp (UTC) | Host / Service | Log excerpt | Observations |
+|-----------------|----------------|------------|--------------|
+| 2025‑11‑10 15:12:35.936 | 192.168.101.148 / PaymentController | `TimeOut: 1` | Configuration of a generic timeout – not client‑specific. |
+| 2025‑11‑10 15:12:35.936 | … | `MaxConnxLimit: 20` | Connection‑pool limit – unrelated to the failure. |
+| 2025‑11‑10 15:12:35.936 | … | `URL: https://txnuat.pineperks.in` | Target endpoint for Pine360 – appears reachable (no connection error logged). |
+| 2025‑11‑10 15:12:35.936 | … | `CSubSystemPine360::bFnGetHardwarePrinterNameForClient … ClientId[127769] … Family Name [INGENICO]` | Successful hardware‑family lookup for **client 127769** – not the client in question. |
+| 2025‑11‑10 15:12:35.920 | … | `CClientLocale::InitClientLocale – Could Not Init Locale Info` / `Locale ID is not GOOD` | Locale‑initialisation failure for **client 0** (system‑wide placeholder), but no downstream impact shown. |
+| 2025‑11‑10 15:12:35.904 | … | `PROMOZONE – RETURNED ERROR ID FOR DAY CLOSE: 1` | Generic “day‑close” error – not a product‑validation error. |
+| 2025‑11‑10 15:12:35.904 | … | `ProcessPrmozoneDayClose Response Code: 11 – Invalid Terminal/Store ID` | Indicates a **terminal/store‑ID mismatch** for **client 127703**, not for **2796506**. |
+| 2025‑11‑10 15:12:35.904 | … | `PromozoneDLLClient – "Invalid Terminal/Store ID"` | Same mismatch repeated; again unrelated to the failing client. |
+| 2025‑11‑10 15:12:35.904 | … | `ProcessPromozoneDayClose. Time Taken: 16 ms` | Performance metric – no error. |
+| 2025‑11‑10 15:12:35.904 | … | `RESPONSE_TIME_IN_MS : "16"` | Same as above. |
+
+**Key points from the log set**
+
+* **No occurrence of `CLIENT_ID: 2796506`.** All client identifiers present are `0`, `127769`, or `127703`.  
+* **No “PRODUCT VALIDATION CALL FAILED” messages** appear. The only error‑type messages relate to *invalid terminal/store IDs* and *locale initialisation* failures.  
+* The logs are **purely informational / tracepoint** entries (enter/exit of stored‑procedure wrappers) and do **not** surface any exception or stack‑trace that would indicate an OEM service outage.  
+
+---
+
+### 3. Investigation Summary  
+
+| Aspect | Explanation |
+|--------|-------------|
+| **Why the logs matter (or not)** | The supplied logs give a snapshot of normal request processing (initialisation, tracepoints, and a few unrelated errors). Because they lack any reference to the failing client ID **2796506** or to the *product‑validation* error, they cannot explain the alert “OEM Service Down”. |
+| **Likely root cause (based on evidence)** | The absence of relevant entries suggests that the failure occurred **outside** the code paths captured in this log slice – most plausibly in a downstream OEM service that the PaymentController calls for product validation. When that external service is unavailable, the controller may abort the request **before** it reaches the logging statements that include the client ID, resulting in no entry for `2796506`. |
+| **Potential system impact** | <ul><li>All transactions for client 2796506 (and possibly other clients) that require product‑validation will be rejected, generating the “PRODUCT VALIDATION CALL FAILED” rows seen in the DB.</li><li>Downstream services (e.g., Pine360, Promozone) appear healthy; the problem is isolated to the OEM validation endpoint.</li><li>Users experience failed payments or order‑placement errors, which is why the alert was raised as **critical**.</li></ul> |
+| **Connection to the failed client IDs** | The database audit shows a series of validation failures for **client 2796506** at 15:08‑15:13 UTC. The logs we have end at 15:12:35 UTC and never reference that client, confirming that the failure path bypassed the logged sections (likely a short‑circuit due to the OEM service being unreachable). |
+| **What to do next** | 1. **Collect logs from the OEM validation client library** (or the HTTP client wrapper) around the same time window – those should contain connection‑refused / timeout errors for the external service.<br>2. **Check network / firewall / DNS** for the OEM endpoint (`https://txnuat.pineperks.in` or the actual validation URL) at the failure timestamps.<br>3. **Enable higher‑verbosity logging** for the PaymentController’s validation call (e.g., `DEBUG` level) to capture request/response payloads and error codes.<br>4. **Correlate** the timestamps from the DB audit (`15:08:44`‑`15:13:28`) with any OEM service health metrics or incident logs. |
+
+---
+
+### 4. Conclusions  
+
+* The current log dump **does not provide direct evidence** of the OEM service outage that triggered the “OEM Service Down” alert.  
+* The failure is **most likely occurring before** the controller logs the client ID, probably at the point where it attempts to call the external product‑validation service.  
+* Because the logs show normal operation for other subsystems (Pine360, Promozone) and only unrelated terminal/store ID errors, the issue appears **isolated to the OEM validation dependency**.  
+* Immediate next steps should focus on **capturing the external‑service interaction logs** and verifying the health/connectivity of the OEM endpoint.  
+
+---  
+
+**Prepared by:** System Investigation Assistant  
+**Date:** 2025‑11‑12  
+
+*End of Report*
+================================================================================

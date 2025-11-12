@@ -1,0 +1,96 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:11:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+- phase_2_PaymentController: N/A entries
+- phase_3_PaymentController: N/A entries
+- phase_4_PaymentController: N/A entries
+- phase_5_PaymentController: N/A entries
+- phase_6_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs provide clear evidence of the issue affecting the PaymentController service, specifically related to product validation failures for client ID 2796506.
+
+## What the Logs Show
+
+### Error Pattern and Timeline
+
+The logs reveal a consistent pattern of product validation failures for client ID 2796506 between 15:08:44 and 15:13:28 on November 10, 2025. The same error message "PRODUCT VALIDATION CALL FAILED" appears repeatedly across multiple transaction attempts.
+
+Key log entries showing the issue:
+
+```
+2025-11-10 15:11:37,411 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 160168][CProductValidation][INFORMATION] DECLINE RESPONSE MESSAGE: PRODUCT VALIDATION CALL FAILED
+```
+
+```
+2025-11-10 15:11:37,427 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 160168][CSubSystemHandler::DoTransaction][INFORMATION] CSubSystemHandler::PerformAddonTxn ProcessAddonTxn ABORT TXN STATUS FROM ADDON HANDLER STATE Message[PRODUCT VALIDATION CALL FAILED]
+```
+
+```
+2025-11-10 15:11:39,100 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 160168][CTCPIPCommunicator::RunNormalSocket][INFORMATION] Client Thread Exited in [20688] [ISO:220][MESSAGE:PRODUCT VALIDATION CALL FAILED][APPVER:220425][SER NU:1000067089][DEVICE TYPE:102][WIFI MODE]
+```
+
+### Transaction Flow and Failure Points
+
+The logs show a clear transaction flow that consistently fails at the product validation step:
+
+1. The client (ID: 2796506) initiates a transaction request (ISO:220)
+2. The PaymentController processes the request through `CSubSystemHandler::DoTransaction`
+3. The system attempts product validation via `CAddonTxnHandler::GetProductInformation`
+4. The product validation fails with "PRODUCT VALIDATION CALL FAILED"
+5. The transaction is aborted with state code 3
+6. The client thread exits with the error message
+
+### Client Device Information
+
+The affected client has the following characteristics:
+- Client ID: 2796506
+- Hardware ID: 1000067089
+- Device Type: 102
+- Application Version: 220425
+- Connection Mode: WIFI MODE
+
+## Investigation Summary
+
+### Root Cause Analysis
+
+The logs strongly indicate that the OEM service responsible for product validation is down or unreachable. The PaymentController is attempting to validate products through an external service call, but these calls are consistently failing.
+
+Key evidence supporting this conclusion:
+
+1. The error message "PRODUCT VALIDATION CALL FAILED" appears consistently across multiple transaction attempts
+2. The same client (ID: 2796506) experiences the same error repeatedly over a period of approximately 30 minutes
+3. The transaction flow consistently fails at the product validation step
+4. The error occurs in the `CProductValidation` component
+5. The absence of logs from `CProductValidation::ProductValidate` suggests the validation process isn't even starting properly
+
+### System Impact
+
+This issue has significant business impact:
+
+1. **Transaction Failures**: All payment transactions requiring product validation for client 2796506 are failing
+2. **Repeated Failures**: The client attempted transactions at least 8 times between 15:08 and 15:13, indicating persistent issues
+3. **User Experience**: The client is receiving rejection messages, likely causing frustration and potential business loss
+4. **System Resources**: Each failed attempt consumes system resources as the full transaction flow is initiated before failing
+
+### Additional Observations
+
+1. The logs show the client is TLE-enabled (Transport Layer Encryption) with `IS_TLE[1]` and `IS_PINE_KEY_UPDATED[1]`, so the issue is not related to encryption or authentication
+2. The client appears to be properly registered and validated in the system as shown by `IsValidClient response[1]`
+3. The error occurs consistently at the same point in the transaction flow, suggesting a specific integration point failure rather than a general system issue
+
+## Conclusion
+
+The OEM Service Down alert is confirmed by the logs. The PaymentController service is unable to complete product validation calls, causing transaction failures for client 2796506. This appears to be an external dependency failure rather than an issue with the PaymentController itself. The consistent nature of the failures across multiple attempts suggests the OEM service responsible for product validation has been completely unavailable since at least 15:08:44 on November 10, 2025.
+
+**Recommendation**: The engineering team should check the status and connectivity of the OEM service responsible for product validation, verify network connectivity between the PaymentController and the OEM service, and implement better error handling and fallback mechanisms to improve resilience against external service failures.
+================================================================================

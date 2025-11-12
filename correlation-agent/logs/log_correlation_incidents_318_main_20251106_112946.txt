@@ -1,0 +1,104 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: Logs Error Spike
+Service: paylater
+Timestamp: 2025-11-05T06:22:32Z
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_paylater: N/A entries
+- phase_2_paylater: N/A entries
+- phase_3_paylater: N/A entries
+- phase_4_paylater: N/A entries
+- phase_5_paylater: N/A entries
+- phase_6_paylater: N/A entries
+================================================================================
+# PayLater Service Error Investigation Report
+
+## Initial Assessment: RELEVANT
+
+The logs provide clear evidence of two distinct errors that explain the error spike in the PayLater service at the reported time (2025-11-05T06:22:32Z).
+
+## What the Logs Show
+
+### Error #1: Missing Required Parameter in OEM Connector
+**Timestamp:** 2025-11-05T06:20:30.838Z  
+**Service:** oemconnector (paylater namespace)  
+**Error Type:** Client validation error (400)
+
+A request to the `/v1/oem/product-validate` endpoint failed because a required field was missing:
+
+```
+"name": "INVALID_REQUEST",
+"message": "Request is not well-formed, syntactically incorrect, or violates schema",
+"details": [{
+  "location": "body",
+  "field": "merchant.state_code",
+  "issue": "MISSING_REQUIRED_PARAMETER",
+  "description": "The value of a required field is missing."
+}]
+```
+
+This was a client-side error (HTTP 400) where the request from a LENOVO OEM partner was missing the required `merchant.state_code` field.
+
+### Error #2: Null Pointer Exception in Catalogue Service
+**Timestamp:** 2025-11-05T06:18:10.099Z  
+**Service:** catalogueserv (paylater namespace)  
+**Error Type:** Server error (500)
+
+A more severe error occurred in the EMI calculation functionality:
+
+```
+"exception.type": "java.lang.NullPointerException",
+"exception.stacktrace": "java.lang.NullPointerException
+  at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.checkIfCcfApplicable(SingleProductEmiCalculatorImpl.java:174)
+  at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.getIssuerEmiCalculationResultMapForNonNBFC(SingleProductEmiCalculatorImpl.java:153)
+  at com.pinelabs.paylater.catalogue.service.emicalculator.impl.SingleProductEmiCalculatorImpl.getEMICalculation(SingleProductEmiCalculatorImpl.java:124)
+  at com.pinelabs.paylater.catalogue.service.impl.OfflineEmiCalculatorServiceImpl.calculateEmi(OfflineEmiCalculatorServiceImpl.java:282)
+```
+
+This error occurred when a POS device (POS_LANDI) attempted to calculate EMI options through the `/v1/catalogue/calculate-emi` endpoint. The application encountered a null pointer exception in the EMI calculation logic.
+
+## Investigation Summary
+
+### Root Causes
+
+1. **OEM Connector Error (Less Critical)**
+   - This was a validation error where requests from LENOVO OEM partners were missing the required state code for merchants.
+   - The system correctly rejected the malformed request with a 400 status code.
+   - This is a client-side issue that needs to be addressed by ensuring the LENOVO integration properly includes all required fields.
+
+2. **Catalogue Service Error (Critical)**
+   - This is a more serious server-side error that resulted in a 500 response to users.
+   - The null pointer exception in the `checkIfCcfApplicable` method indicates the EMI calculator is attempting to access a null object.
+   - This likely happens when certain product configurations or CCF (Credit Cost Factor) parameters are missing or improperly set up.
+
+### System Impact
+
+1. **User Experience Impact:**
+   - POS devices attempting to calculate EMI options would receive a generic "internal server error" message.
+   - This would prevent merchants from offering EMI payment options to customers at the point of sale.
+   - The error in the OEM connector would prevent product validation for LENOVO products.
+
+2. **System Health Impact:**
+   - The null pointer exception suggests a data integrity or configuration issue in the EMI calculation system.
+   - The error spike was detected at 06:22:32Z, which aligns with the timeframe of these errors.
+   - The system continued to function for other operations, as evidenced by successful product search queries seen in later logs.
+
+## Recommendations
+
+1. **Immediate Actions:**
+   - Fix the null pointer exception in `SingleProductEmiCalculatorImpl.checkIfCcfApplicable()` by adding proper null checks.
+   - Review the data flow for EMI calculations to ensure all required parameters are properly initialized.
+
+2. **For OEM Integration:**
+   - Communicate with LENOVO integration team to ensure their requests include the required `merchant.state_code` field.
+   - Consider enhancing validation messages to provide clearer guidance on required fields.
+
+3. **Long-term Improvements:**
+   - Implement more robust error handling in the EMI calculator to prevent null pointer exceptions.
+   - Add monitoring specifically for the EMI calculation service to detect similar issues earlier.
+   - Review data models and validation for all OEM integrations to prevent similar field omissions.
+
+This investigation confirms that the error spike was caused by legitimate application issues that need to be addressed to restore full functionality to the PayLater service.
+================================================================================

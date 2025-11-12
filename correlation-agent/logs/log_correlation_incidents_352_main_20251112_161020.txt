@@ -1,0 +1,74 @@
+================================================================================
+LOG CORRELATION ANALYSIS REPORT
+================================================================================
+Alert: OEM Service Down
+Service: PaymentController
+Timestamp: 2025-11-10 15:12:37.4473
+================================================================================
+FETCHED LOGS SUMMARY:
+- phase_1_PaymentController: N/A entries
+================================================================================
+# OEM Service Down Investigation Report
+
+## Initial Assessment: RELEVANT
+
+## What the Logs Show
+
+### Critical Finding: Internal Server Error in Product Validation
+The logs reveal that an Internal Server Error occurred during product validation, which is directly related to the OEM service outage:
+
+```
+2025-11-10 15:09:48,653 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152344][CProductValidation::ProductValidate][INFORMATION] ResponseMsg: Internal Server Error occurred.
+```
+
+This Internal Server Error immediately preceded the "PRODUCT VALIDATION CALL FAILED" error message that was recorded in the database for client ID 2796506.
+
+### Transaction Flow and Failure Pattern
+The logs show a clear sequence of events for thread ID 152344 (one of the identified thread IDs associated with the failures):
+
+1. **15:09:27**: Initial connection issues with client data retrieval
+   ```
+   2025-11-10 15:09:27,226 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152344][SecureMemCpy][INFORMATION] FATAL ERROR Calling Function[ClientInfo::GetClientDetails]
+   ```
+
+2. **15:09:27-15:09:32**: Multiple failures with QSparc offline parameter download
+   ```
+   2025-11-10 15:09:27,351 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152344][CISO220::bFnHandleQSparcOfflineParameterDownload][INFORMATION] QSparc Offline on Device :: bFnHandleQSparcOfflineParameterDownload Failed
+   ```
+
+3. **15:09:48**: Product validation failure with Internal Server Error
+   ```
+   2025-11-10 15:09:48,653 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152344][CProductValidation::ProductValidate][INFORMATION] ResponseMsg: Internal Server Error occurred.
+   2025-11-10 15:09:48,653 [PC_INSTANCE_ID: 1, CLIENT_ID: 0, THREAD_ID: 152344][CProductValidation][INFORMATION] DECLINE RESPONSE MESSAGE: PRODUCT VALIDATION CALL FAILED
+   ```
+
+4. **15:09:48-15:09:50**: Transaction aborted and error logged
+   ```
+   2025-11-10 15:09:48,653 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152344][CSubSystemHandler::DoTransaction][INFORMATION] CSubSystemHandler::PerformAddonTxn ProcessAddonTxn ABORT TXN STATUS FROM ADDON HANDLER STATE Message[PRODUCT VALIDATION CALL FAILED]
+   ```
+
+5. **15:09:50**: Client thread exited with error
+   ```
+   2025-11-10 15:09:50,647 [PC_INSTANCE_ID: 1, CLIENT_ID: 2796506, THREAD_ID: 152344][CTCPIPCommunicator::RunNormalSocket][INFORMATION] Client Thread Exited in [23469] [ISO:220][MESSAGE:PRODUCT VALIDATION CALL FAILED]
+   ```
+
+## Investigation Summary
+
+The PaymentController service outage was caused by an Internal Server Error during product validation calls. This directly correlates with the database records showing multiple "PRODUCT VALIDATION CALL FAILED" errors for client ID 2796506 between 15:08 and 15:13.
+
+### Root Cause Analysis
+1. The logs show that the PaymentController was unable to validate products through what appears to be an OEM validation service.
+2. The Internal Server Error suggests that the OEM service itself was experiencing issues or was completely unavailable.
+3. The system attempted to handle the failure by logging errors and aborting transactions, but could not recover normal operation.
+
+### System Impact
+1. **Payment Processing**: Transactions requiring product validation were being declined and aborted.
+2. **Client Experience**: Client ID 2796506 experienced repeated failures over a 5-minute period.
+3. **Error Propagation**: The system correctly logged the errors but could not resolve the underlying connectivity issue with the OEM service.
+
+### Additional Observations
+- The logs show attempts to check for IMEI "heheeueuwuwqqi" which appears to be an invalid format, possibly indicating data corruption or test data.
+- There were also issues with QSparc being offline on the device, which may be related to or a consequence of the OEM service being down.
+
+The evidence strongly suggests that the PaymentController service was down due to its dependency on an unavailable OEM service for product validation, resulting in systematic transaction failures.
+================================================================================
